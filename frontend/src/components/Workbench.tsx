@@ -18,6 +18,8 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  Eraser,
+  Zap,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -29,6 +31,7 @@ interface OcrResult {
   text: string
   confidence: number
   bbox: [number, number, number, number]
+  polygon: [number, number][] | null   // 精确多边形，用于 inpaint
   is_merged: boolean
   original_count: number
   original_texts: string[]
@@ -150,12 +153,19 @@ export default function Workbench() {
   const [ocrParams, setOcrParams] = useState<OcrParams>({
     det_limit_type: 'max',
     det_limit_side_len: 960,
-    confidence_threshold: 0.0,
+    confidence_threshold: 0.7,
   })
   const [showAdvanced, setShowAdvanced] = useState(false)
 
   // translation
   const [translating, setTranslating] = useState(false)
+
+  // inpaint
+  const [inpainting, setInpainting] = useState(false)
+  const [inpaintedUrl, setInpaintedUrl] = useState<string>('')   // base64 消除后图片
+
+  // full pipeline
+  const [pipelineRunning, setPipelineRunning] = useState(false)
 
   // text replace
   const [textReplaceMode, setTextReplaceMode] = useState(false)
@@ -199,6 +209,7 @@ export default function Workbench() {
     setImageUrl(url)
     setOcrResults([])
     setTextReplaceMode(false)
+    setInpaintedUrl('')
     textFitRefs.current = {}
     textFitApplied.current = new Set()
     return () => URL.revokeObjectURL(url)
@@ -256,6 +267,7 @@ export default function Workbench() {
             text: r.text,
             confidence: r.confidence,
             bbox: r.bbox,
+            polygon: r.polygon || null,
             is_merged: r.is_merged || false,
             original_count: r.original_count || 1,
             original_texts: r.original_texts || [r.text],
@@ -300,6 +312,124 @@ export default function Workbench() {
       showStatus('翻译出错: ' + (e.response?.data?.detail || e.message), 'error')
     } finally {
       setTranslating(false)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inpaint
+  // ---------------------------------------------------------------------------
+
+  const performInpaint = async () => {
+    if (!images[currentIdx] || ocrResults.length === 0) {
+      showStatus('请先完成 OCR 识别', 'error')
+      return
+    }
+    setInpainting(true)
+    showStatus('正在消除文字...', 'info')
+    try {
+      const base64 = await fileToBase64(images[currentIdx])
+      const { data } = await axios.post('/api/ocr/inpaint', {
+        image_url: base64,
+        bboxes: ocrResults.map(r => r.bbox),
+        polygons: ocrResults.map(r => r.polygon),
+        padding: 2,
+      })
+      if (data.success) {
+        setInpaintedUrl(data.image)
+        showStatus(`文字消除完成，耗时 ${data.processing_time}s`, 'success')
+      }
+    } catch (e: any) {
+      showStatus('文字消除失败: ' + (e.response?.data?.detail || e.message), 'error')
+    } finally {
+      setInpainting(false)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Full pipeline
+  // ---------------------------------------------------------------------------
+
+  const runFullPipeline = async () => {
+    if (!images[currentIdx]) {
+      showStatus('请先上传图片', 'error')
+      return
+    }
+    setPipelineRunning(true)
+    setTextReplaceMode(false)
+    setInpaintedUrl('')
+    textFitRefs.current = {}
+    textFitApplied.current = new Set()
+
+    try {
+      const base64 = await fileToBase64(images[currentIdx])
+
+      // Step 1: OCR
+      showStatus('1/4 OCR 识别中...', 'info')
+      const ocrRes = await axios.post('/api/ocr/recognize', {
+        image_url: base64,
+        language: sourceLanguage,
+        ...ocrParams,
+      })
+      if (!ocrRes.data.success) {
+        showStatus('OCR 识别失败: ' + ocrRes.data.error, 'error')
+        return
+      }
+      const results: OcrResult[] = ocrRes.data.results.map((r: any, i: number) => ({
+        id: i,
+        text: r.text,
+        confidence: r.confidence,
+        bbox: r.bbox,
+        polygon: r.polygon || null,
+        is_merged: r.is_merged || false,
+        original_count: r.original_count || 1,
+        original_texts: r.original_texts || [r.text],
+        translation: null,
+      }))
+      setOcrResults(results)
+
+      if (results.length === 0) {
+        showStatus('未检测到文字', 'info')
+        return
+      }
+
+      // Step 2: 翻译
+      showStatus(`2/4 翻译 ${results.length} 个文本...`, 'info')
+      const transRes = await axios.post('/api/ocr/translate/batch', {
+        texts: results.map(r => r.text),
+        source_language: sourceLanguage,
+        target_language: targetLanguage,
+      })
+      let translated = results
+      if (transRes.data.success) {
+        translated = results.map((r, i) => ({
+          ...r,
+          translation: transRes.data.translations[i] ?? null,
+        }))
+        setOcrResults(translated)
+      }
+
+      // Step 3: 消除文字
+      showStatus('3/4 消除原文...', 'info')
+      const inpaintRes = await axios.post('/api/ocr/inpaint', {
+        image_url: base64,
+        bboxes: translated.map(r => r.bbox),
+        polygons: translated.map(r => r.polygon),
+        padding: 2,
+      })
+      if (inpaintRes.data.success) {
+        setInpaintedUrl(inpaintRes.data.image)
+      }
+
+      // Step 4: 开启文字替换
+      showStatus('4/4 应用文字替换...', 'info')
+      textFitApplied.current = new Set()
+      setTextReplaceMode(true)
+
+      showStatus('完成！', 'success')
+    } catch (e: any) {
+      showStatus('流程出错: ' + (e.response?.data?.detail || e.message), 'error')
+    } finally {
+      setPipelineRunning(false)
     }
   }
 
@@ -545,31 +675,37 @@ export default function Workbench() {
             <>
               <img
                 ref={imgRef}
-                src={imageUrl}
+                src={inpaintedUrl || imageUrl}
                 alt="manga page"
                 style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
               />
 
               {/* OCR overlay */}
-              {showBoxes && ocrResults.length > 0 && (
+              {(showBoxes || textReplaceMode) && ocrResults.length > 0 && (
                 <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
                   {ocrResults.map((result, i) => {
                     const boxStyle = getBoxStyle(result.bbox)
                     const isSelected = selectedIdx === i
                     const isDelSel = selectedForDelete.has(i)
+                    // 文字替换模式下：有消除底图则透明（底图已干净），无则黑色遮原文
+                    const inReplaceWithTranslation = textReplaceMode && result.translation
                     const borderColor = isDelSel
                       ? '#ef4444'
                       : isSelected
                       ? '#818cf8'
-                      : textReplaceMode && result.translation
+                      : inReplaceWithTranslation
+                      ? 'transparent'
+                      : !showBoxes
                       ? 'transparent'
                       : 'rgba(99, 102, 241, 0.6)'
                     const bg = isDelSel
                       ? 'rgba(239, 68, 68, 0.15)'
                       : isSelected
                       ? 'rgba(129, 140, 248, 0.1)'
-                      : textReplaceMode && result.translation
-                      ? 'rgba(0,0,0,0.82)'
+                      : inReplaceWithTranslation
+                      ? (inpaintedUrl ? 'transparent' : 'rgba(0,0,0,0.82)')
+                      : !showBoxes
+                      ? 'transparent'
                       : 'rgba(99, 102, 241, 0.05)'
 
                     return (
@@ -591,7 +727,8 @@ export default function Workbench() {
                             style={{
                               width: '100%',
                               height: '100%',
-                              color: '#fff',
+                              // 有消除底图（白底）用深色文字；无底图（黑色遮罩）用白色文字
+                              color: inpaintedUrl ? '#111' : '#fff',
                               opacity: 0,
                               padding: '2px',
                             }}
@@ -628,6 +765,13 @@ export default function Workbench() {
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2 mb-3">
               <ActionBtn
+                icon={<Zap size={14} />}
+                label={pipelineRunning ? '处理中...' : '一键翻译'}
+                onClick={runFullPipeline}
+                disabled={!imageUrl || pipelineRunning}
+                primary
+              />
+              <ActionBtn
                 icon={<ScanText size={14} />}
                 label={ocrProcessing ? '识别中...' : '开始识别'}
                 onClick={performOCR}
@@ -646,6 +790,13 @@ export default function Workbench() {
                 onClick={toggleTextReplace}
                 disabled={!hasTranslations}
                 active={textReplaceMode}
+              />
+              <ActionBtn
+                icon={<Eraser size={14} />}
+                label={inpainting ? '消除中...' : inpaintedUrl ? '重新消除' : '消除文字'}
+                onClick={performInpaint}
+                disabled={ocrResults.length === 0 || inpainting}
+                active={!!inpaintedUrl}
               />
               <ActionBtn
                 icon={<Trash2 size={14} />}
