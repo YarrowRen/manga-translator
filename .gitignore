@@ -1,0 +1,53 @@
+# ──────────────────────────────────────────
+# Python / Backend
+# ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+
+# 敏感配置（保留 .env.example，忽略实际配置）
+backend/.env
+backend/logs/
+
+# PaddleOCR 模型缓存
+.paddleocr/
+inference/
+
+# ──────────────────────────────────────────
+# Node / Frontend
+# ──────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/*.local
+
+# npm/yarn logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ──────────────────────────────────────────
+# Editor / OS
+# ──────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
