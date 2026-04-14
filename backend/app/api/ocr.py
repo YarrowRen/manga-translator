@@ -378,7 +378,6 @@ async def translate_japanese_to_chinese_batch(texts: List[str]) -> List[str]:
         translation_json = json.loads(cleaned)
         return [translation_json.get(str(i + 1), texts[i]) for i in range(len(texts))]
     except json.JSONDecodeError:
-        # 尝试提取 JSON 片段
         start = translation_text.find("{")
         end = translation_text.rfind("}") + 1
         if start >= 0 and end > start:
@@ -439,7 +438,6 @@ async def recognize_text(request: OCRRequest):
         merger = DialogMerger()
         merged = merger.merge_ocr_results(raw_results)
 
-        # 漫画阅读顺序排序（上→下，右→左）
         merged.sort(key=lambda r: (r["bbox"][1], -r["bbox"][2]))
 
         results = [
@@ -486,8 +484,6 @@ async def translate_batch(request: BatchTranslateRequest):
                 "target_language": request.target_language,
                 "translation_method": "japanese_manga_prompt",
             }
-
-        # 其他语言组合暂时直传
         return {
             "success": True,
             "translations": request.texts,
@@ -521,9 +517,10 @@ class InpaintRequest(BaseModel):
     padding: int = 2                                  # 膨胀像素（像素级遮罩已精确，不需要太大）
 
 
-def _sample_background(img_bgr: np.ndarray, x1: int, y1: int, x2: int, y2: int, border: int = 6) -> tuple[bool, np.ndarray]:
+def _sample_background(img_bgr: np.ndarray, x1: int, y1: int, x2: int, y2: int, border: int = 20) -> tuple[bool, np.ndarray]:
     """
     采样 bbox 外围像素环，判断背景是否均匀。
+    border=20 确保采样能跳出气泡框内部，得到真实页面背景色。
     返回 (is_simple, mean_color_bgr)
     """
     h, w = img_bgr.shape[:2]
@@ -546,63 +543,30 @@ def _sample_background(img_bgr: np.ndarray, x1: int, y1: int, x2: int, y2: int, 
 
     arr = np.array(samples, dtype=np.float32)
     mean_color = np.mean(arr, axis=0).astype(np.uint8)
-    is_simple = float(np.var(arr)) < 300
+    # 放宽阈值至 500：更大的采样环自然方差更高，避免纹理背景被误判为复杂
+    is_simple = float(np.var(arr)) < 500
     return is_simple, mean_color
 
 
-def _build_text_mask(img_bgr: np.ndarray,
-                     polygon: Optional[List[List[float]]],
-                     bbox: List[float],
-                     padding: int,
-                     h: int, w: int) -> np.ndarray:
+def _build_region_mask(polygon: Optional[List[List[float]]],
+                       bbox: List[float],
+                       h: int, w: int) -> np.ndarray:
     """
-    构建单个文字区域的精确像素遮罩：
-      1. 用多边形（或 bbox）确定文字所在区域
-      2. 在该区域内用 Otsu 阈值找到深色墨水像素
-      3. 膨胀 padding 像素覆盖边缘锯齿
+    构建文字区域遮罩（覆盖整个多边形/bbox 区域）。
+    直接填充整个区域，不做 Otsu 细化——背景色填充时无需区分墨水像素，
+    且避免了 Otsu 在彩色背景下将背景误判为墨水的问题。
     """
-    # Step 1：多边形 mask
-    poly_mask = np.zeros((h, w), dtype=np.uint8)
+    mask = np.zeros((h, w), dtype=np.uint8)
     if polygon and len(polygon) >= 3:
         pts = np.array(polygon, dtype=np.int32).reshape(-1, 1, 2)
-        cv2.fillPoly(poly_mask, [pts], 255)
+        cv2.fillPoly(mask, [pts], 255)
     else:
-        x1 = max(0, int(bbox[0]))
-        y1 = max(0, int(bbox[1]))
-        x2 = min(w, int(bbox[2]))
-        y2 = min(h, int(bbox[3]))
-        poly_mask[y1:y2, x1:x2] = 255
-
-    # 取多边形的 bounding rect 作为 ROI
-    ys, xs = np.where(poly_mask > 0)
-    if len(xs) == 0:
-        return poly_mask
-    rx1, ry1 = int(xs.min()), int(ys.min())
-    rx2, ry2 = int(xs.max()) + 1, int(ys.max()) + 1
-
-    # Step 2：ROI 内 Otsu 阈值找墨水像素（深色 = 文字）
-    roi_gray = cv2.cvtColor(img_bgr[ry1:ry2, rx1:rx2], cv2.COLOR_BGR2GRAY)
-    if roi_gray.size == 0:
-        return poly_mask
-
-    # Otsu 找全局阈值；如果区域几乎全白则跳过
-    _, text_pixels = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    # 将像素级 mask 放回全图坐标
-    pixel_mask = np.zeros((h, w), dtype=np.uint8)
-    pixel_mask[ry1:ry2, rx1:rx2] = text_pixels
-
-    # Step 3：取交集（多边形范围内的墨水像素）
-    precise_mask = cv2.bitwise_and(poly_mask, pixel_mask)
-
-    # Step 4：膨胀，覆盖反锯齿边缘
-    if padding > 0:
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (padding * 2 + 1, padding * 2 + 1))
-        precise_mask = cv2.dilate(precise_mask, kernel)
-        # 膨胀后仍限制在多边形内（避免扩到边框线）
-        precise_mask = cv2.bitwise_and(precise_mask, poly_mask)
-
-    return precise_mask
+        rx1 = max(0, int(bbox[0]))
+        ry1 = max(0, int(bbox[1]))
+        rx2 = min(w, int(bbox[2]))
+        ry2 = min(h, int(bbox[3]))
+        mask[ry1:ry2, rx1:rx2] = 255
+    return mask
 
 
 def inpaint_image(img_bgr: np.ndarray,
@@ -612,9 +576,10 @@ def inpaint_image(img_bgr: np.ndarray,
     """
     文字消除主函数。
     对每个区域：
-      - 构建精确像素遮罩（多边形 + Otsu 阈值）
-      - 均匀背景 → 用边缘均值色填充
-      - 复杂背景 → cv2.inpaint Telea 算法
+      - 构建整个多边形遮罩（不做 Otsu 细化，避免彩色背景下的误判）
+      - 均匀背景 → 用采样均值色填充整个区域
+      - 复杂背景 → cv2.inpaint Telea 算法重建纹理
+    采样范围扩大至 20px，确保能跳出气泡框内部，得到真实页面背景色。
     """
     h, w = img_bgr.shape[:2]
     result = img_bgr.copy()
@@ -625,11 +590,10 @@ def inpaint_image(img_bgr: np.ndarray,
     for i, bbox in enumerate(bboxes):
         poly = (polygons[i] if polygons and i < len(polygons) else None)
 
-        text_mask = _build_text_mask(img_bgr, poly, bbox, padding, h, w)
-        if not text_mask.any():
+        region_mask = _build_region_mask(poly, bbox, h, w)
+        if not region_mask.any():
             continue
 
-        # 用 bbox 外围判断背景类型
         x1 = max(0, int(bbox[0]))
         y1 = max(0, int(bbox[1]))
         x2 = min(w, int(bbox[2]))
@@ -637,17 +601,17 @@ def inpaint_image(img_bgr: np.ndarray,
         is_simple, mean_color = _sample_background(img_bgr, x1, y1, x2, y2)
 
         if is_simple:
-            simple_fills.append((text_mask, mean_color))
+            simple_fills.append((region_mask, mean_color))
         else:
-            complex_mask = cv2.bitwise_or(complex_mask, text_mask)
+            complex_mask = cv2.bitwise_or(complex_mask, region_mask)
 
-    # 1. 均匀背景：直接填均值色（逐像素，精确不溢出）
+    # 1. 均匀背景：直接填均值色
     for mask, color in simple_fills:
         result[mask > 0] = color
 
-    # 2. 复杂背景：一次性 inpaint
+    # 2. 复杂背景：一次性 inpaint（inpaintRadius 增大以处理较大区域）
     if complex_mask.any():
-        result = cv2.inpaint(result, complex_mask, inpaintRadius=12, flags=cv2.INPAINT_TELEA)
+        result = cv2.inpaint(result, complex_mask, inpaintRadius=20, flags=cv2.INPAINT_TELEA)
 
     return result
 
@@ -661,44 +625,6 @@ def ndarray_to_base64_png(img_bgr: np.ndarray) -> str:
     return f"data:image/png;base64,{b64}"
 
 
-@router.post("/inpaint")
-async def inpaint_text(request: InpaintRequest):
-    """
-    文字消除：接收图片（base64）+ OCR bbox 列表，返回消除文字后的图片（base64 PNG）。
-    """
-    try:
-        # 解码图片
-        if not request.image_url.startswith("data:"):
-            raise HTTPException(status_code=400, detail="仅支持 base64 data URL 输入")
-
-        header, data = request.image_url.split(",", 1)
-        image_bytes = base64.b64decode(data)
-        np_arr = np.frombuffer(image_bytes, dtype=np.uint8)
-        img_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-
-        if img_bgr is None:
-            raise HTTPException(status_code=400, detail="图片解码失败，请确认格式正确")
-
-        if not request.bboxes:
-            raise HTTPException(status_code=400, detail="bboxes 列表不能为空")
-
-        logger.info(f"开始文字消除，共 {len(request.bboxes)} 个区域，使用精确多边形: {request.polygons is not None}")
-        start = time.time()
-
-        result = inpaint_image(img_bgr, request.bboxes, polygons=request.polygons, padding=request.padding)
-        result_b64 = ndarray_to_base64_png(result)
-
-        elapsed = time.time() - start
-        logger.info(f"文字消除完成，耗时 {elapsed:.2f}s")
-
-        return {
-            "success": True,
-            "image": result_b64,
-            "processing_time": round(elapsed, 3),
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"文字消除失败: {e}")
-        raise HTTPException(status_code=500, detail=f"文字消除失败: {str(e)}")
+# /inpaint — MOVED TO FRONTEND (src/services/inpaintService.ts)
+# @router.post("/inpaint")
+# async def inpaint_text(request: InpaintRequest): ...

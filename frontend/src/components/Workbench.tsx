@@ -3,12 +3,14 @@ import {
   type RefCallback,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
 import { useWorkbench, type OcrResult } from '../store/workbenchContext'
+import { translateBatch } from '../services/translationService'
+import { inpaintRegions } from '../services/inpaintService'
+import { recognizeText } from '../services/ocrService'
 import {
   Upload, FolderOpen, ScanText, Languages, Type,
   Trash2, Settings, ChevronLeft, ChevronRight, X,
-  Eraser, Zap, ChevronDown, Check, AlertCircle, Info,
+  Zap, ChevronDown, Check, AlertCircle, Info,
 } from 'lucide-react'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,6 +147,9 @@ export default function Workbench() {
   const textFitRefs = useRef<Record<number, HTMLElement | null>>({})
   const textFitApplied = useRef<Set<number>>(new Set())
 
+  // Per-box text color (auto-detected from background brightness)
+  const [boxTextColors, setBoxTextColors] = useState<Record<number, string>>({})
+
   // Force re-render tick (used by ResizeObserver to re-calculate box positions)
   const [, setRenderTick] = useState(0)
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -242,23 +247,20 @@ export default function Workbench() {
     showToast('正在进行 OCR 识别...', 'info')
     try {
       const base64 = await fileToBase64(currentImage)
-      const { data } = await axios.post('/api/ocr/recognize', {
-        image_url: base64, language: sourceLanguage, ...ocrParams,
-      })
-      if (data.success) {
-        const results: OcrResult[] = data.results.map((r: any, i: number) => ({
-          id: i, text: r.text, confidence: r.confidence,
-          bbox: r.bbox, polygon: r.polygon || null,
-          is_merged: r.is_merged || false,
-          original_count: r.original_count || 1,
-          original_texts: r.original_texts || [r.text],
-          translation: null,
-        }))
-        setOcrResults(currentId, results)
-        showToast(`识别完成，共 ${results.length} 个文本区域`, 'success')
-      } else showToast('OCR 识别失败: ' + data.error, 'error')
+      const rawResults = await recognizeText(base64, { language: sourceLanguage, ...ocrParams })
+      const results: OcrResult[] = rawResults.map((r, i) => ({
+        id: i, text: r.text, confidence: r.confidence,
+        bbox: r.bbox as [number, number, number, number],
+        polygon: r.polygon as [number, number][] | null,
+        is_merged: r.is_merged || false,
+        original_count: r.original_count || 1,
+        original_texts: r.original_texts || [r.text],
+        translation: null,
+      }))
+      setOcrResults(currentId, results)
+      showToast(`识别完成，共 ${results.length} 个文本区域`, 'success')
     } catch (e: any) {
-      showToast('OCR 出错: ' + (e.response?.data?.detail || e.message), 'error')
+      showToast('OCR 出错: ' + e.message, 'error')
     } finally { setOcrProcessing(false) }
   }
 
@@ -269,43 +271,42 @@ export default function Workbench() {
     setTranslating(true)
     showToast(`翻译中，共 ${ocrResults.length} 个文本...`, 'info')
     try {
-      const { data } = await axios.post('/api/ocr/translate/batch', {
-        texts: ocrResults.map(r => r.text),
-        source_language: sourceLanguage, target_language: targetLanguage,
-      })
-      if (data.success) {
-        setOcrResults(currentId, prev =>
-          prev.map((r, i) => ({ ...r, translation: data.translations[i] ?? null }))
-        )
-        showToast('翻译完成', 'success')
-      }
+      const translations = await translateBatch(
+        ocrResults.map(r => r.text),
+        sourceLanguage,
+        targetLanguage,
+      )
+      setOcrResults(currentId, prev =>
+        prev.map((r, i) => ({ ...r, translation: translations[i] ?? null }))
+      )
+      showToast('翻译完成', 'success')
     } catch (e: any) {
-      showToast('翻译出错: ' + (e.response?.data?.detail || e.message), 'error')
+      showToast('翻译出错: ' + e.message, 'error')
     } finally { setTranslating(false) }
   }
 
-  // ── Inpaint ───────────────────────────────────────────────────────────────
+  // ── Inpaint (internal, returns success flag) ─────────────────────────────
 
-  const performInpaint = async () => {
+  const performInpaint = async (): Promise<boolean> => {
     if (!currentImage || !currentId || !ocrResults.length) {
-      showToast('请先完成 OCR 识别', 'error'); return
+      showToast('请先完成 OCR 识别', 'error'); return false
     }
     setInpainting(true)
     showToast('正在消除文字...', 'info')
+    const t0 = performance.now()
     try {
       const base64 = await fileToBase64(currentImage)
-      const { data } = await axios.post('/api/ocr/inpaint', {
-        image_url: base64,
-        bboxes: ocrResults.map(r => r.bbox),
-        polygons: ocrResults.map(r => r.polygon),
-        padding: 2,
-      })
-      if (data.success) {
-        setInpaintedUrl(currentId, data.image)
-        showToast(`消除完成，耗时 ${data.processing_time}s`, 'success')
-      }
+      const resultUrl = await inpaintRegions(
+        base64,
+        ocrResults.map(r => r.bbox),
+        ocrResults.map(r => r.polygon),
+      )
+      setInpaintedUrl(currentId, resultUrl)
+      showToast(`消除完成，耗时 ${((performance.now() - t0) / 1000).toFixed(2)}s`, 'success')
+      return true
     } catch (e: any) {
-      showToast('消除失败: ' + (e.response?.data?.detail || e.message), 'error')
+      showToast('消除失败: ' + e.message, 'error')
+      return false
     } finally { setInpainting(false) }
   }
 
@@ -324,13 +325,12 @@ export default function Workbench() {
       const base64 = await fileToBase64(currentImage)
 
       // Step 1: OCR
-      const ocrRes = await axios.post('/api/ocr/recognize', {
-        image_url: base64, language: sourceLanguage, ...ocrParams,
-      })
-      if (!ocrRes.data.success) { showToast('OCR 识别失败', 'error'); return }
-      const results: OcrResult[] = ocrRes.data.results.map((r: any, i: number) => ({
+      const rawResults = await recognizeText(base64, { language: sourceLanguage, ...ocrParams })
+      if (!rawResults.length) { showToast('未检测到文字', 'info'); return }
+      const results: OcrResult[] = rawResults.map((r, i) => ({
         id: i, text: r.text, confidence: r.confidence,
-        bbox: r.bbox, polygon: r.polygon || null,
+        bbox: r.bbox as [number, number, number, number],
+        polygon: r.polygon as [number, number][] | null,
         is_merged: r.is_merged || false,
         original_count: r.original_count || 1,
         original_texts: r.original_texts || [r.text],
@@ -341,27 +341,24 @@ export default function Workbench() {
 
       // Step 2: Translate
       setPipelineStep(1)
-      const transRes = await axios.post('/api/ocr/translate/batch', {
-        texts: results.map(r => r.text),
-        source_language: sourceLanguage, target_language: targetLanguage,
-      })
-      let translated = results
-      if (transRes.data.success) {
-        translated = results.map((r, i) => ({
-          ...r, translation: transRes.data.translations[i] ?? null,
-        }))
-        setOcrResults(currentId, translated)
-      }
+      const translations = await translateBatch(
+        results.map(r => r.text),
+        sourceLanguage,
+        targetLanguage,
+      )
+      const translated = results.map((r, i) => ({
+        ...r, translation: translations[i] ?? null,
+      }))
+      setOcrResults(currentId, translated)
 
       // Step 3: Inpaint
       setPipelineStep(2)
-      const inpaintRes = await axios.post('/api/ocr/inpaint', {
-        image_url: base64,
-        bboxes: translated.map(r => r.bbox),
-        polygons: translated.map(r => r.polygon),
-        padding: 2,
-      })
-      if (inpaintRes.data.success) setInpaintedUrl(currentId, inpaintRes.data.image)
+      const inpaintedDataUrl = await inpaintRegions(
+        base64,
+        translated.map(r => r.bbox),
+        translated.map(r => r.polygon),
+      )
+      setInpaintedUrl(currentId, inpaintedDataUrl)
 
       // Step 4: Replace
       setPipelineStep(3)
@@ -411,16 +408,21 @@ export default function Workbench() {
 
   const hasTranslations = ocrResults.some(r => r.translation?.trim())
 
-  const toggleTextReplace = () => {
+  const toggleTextReplace = async () => {
     if (textReplaceMode) {
       setTextReplaceMode(false)
       textFitRefs.current = {}
       textFitApplied.current = new Set()
-    } else {
-      if (!hasTranslations) { showToast('请先完成翻译', 'error'); return }
-      textFitApplied.current = new Set()
-      setTextReplaceMode(true)
+      return
     }
+    if (!hasTranslations) { showToast('请先完成翻译', 'error'); return }
+    // Auto-inpaint if not already done
+    if (!inpaintedUrl) {
+      const ok = await performInpaint()
+      if (!ok) return
+    }
+    textFitApplied.current = new Set()
+    setTextReplaceMode(true)
   }
 
   const setTextFitRef: (idx: number) => RefCallback<HTMLElement> = idx => el => {
@@ -447,6 +449,45 @@ export default function Workbench() {
       })
     }, 80)
   }, [textReplaceMode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-detect text color from background brightness ────────────────────
+  // Samples each OCR box region from the inpainted/original image using a
+  // canvas, computes luminance, chooses dark (#111) or light (#fff) text.
+  useEffect(() => {
+    if (!textReplaceMode) { setBoxTextColors({}); return }
+    const imgSrc = inpaintedUrl || imageUrl
+    if (!imgSrc || !ocrResults.length) return
+
+    const tempImg = new Image()
+    tempImg.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = tempImg.naturalWidth
+      canvas.height = tempImg.naturalHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.drawImage(tempImg, 0, 0)
+      const colors: Record<number, string> = {}
+      for (const result of ocrResults) {
+        const [x1, y1, x2, y2] = result.bbox
+        const sw = Math.max(1, Math.round(x2 - x1))
+        const sh = Math.max(1, Math.round(y2 - y1))
+        try {
+          const data = ctx.getImageData(Math.round(x1), Math.round(y1), sw, sh)
+          let rSum = 0, gSum = 0, bSum = 0
+          const n = data.data.length / 4
+          for (let i = 0; i < data.data.length; i += 4) {
+            rSum += data.data[i]; gSum += data.data[i + 1]; bSum += data.data[i + 2]
+          }
+          const lum = (rSum / n * 0.299 + gSum / n * 0.587 + bSum / n * 0.114) / 255
+          colors[result.id] = lum > 0.5 ? '#111' : '#fff'
+        } catch {
+          colors[result.id] = '#111'
+        }
+      }
+      setBoxTextColors(colors)
+    }
+    tempImg.src = imgSrc
+  }, [textReplaceMode, inpaintedUrl, imageUrl]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Box positioning ───────────────────────────────────────────────────────
 
@@ -487,14 +528,11 @@ export default function Workbench() {
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <header style={{ background: '#0d0d1c', borderBottom: '1px solid #1a1a30' }}
-        className="flex items-center gap-2 px-3 md:px-5 py-2 md:py-2.5 shrink-0">
+        className="flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 shrink-0">
 
         {/* Brand */}
         <div className="flex items-center gap-2 mr-1">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, #6366f1 0%, #818cf8 100%)' }}>
-            <Type size={13} color="white" />
-          </div>
+          <span className="text-lg leading-none">🌸</span>
           <span className="font-semibold text-sm md:text-base hidden sm:inline"
             style={{ color: '#c7c7f0', letterSpacing: '-0.01em' }}>
             MangaTrans
@@ -551,7 +589,7 @@ export default function Workbench() {
       {/* ── Pipeline progress bar ── */}
       {pipelineRunning && pipelineStep >= 0 && (
         <div style={{ background: '#0d0d1c', borderBottom: '1px solid #1a1a30' }}
-          className="shrink-0 px-4 py-2 fade-in">
+          className="shrink-0 px-4 md:px-6 py-2 fade-in">
           <div className="flex items-center gap-3">
             {PIPELINE_LABELS.map((label, i) => (
               <div key={i} className="flex items-center gap-1.5">
@@ -591,6 +629,7 @@ export default function Workbench() {
             textReplaceMode={textReplaceMode}
             selectedIdx={selectedIdx}
             selectedForDelete={selectedForDelete}
+            boxTextColors={boxTextColors}
             getBoxStyle={getBoxStyle}
             handleBoxClick={handleBoxClick}
             setTextFitRef={setTextFitRef}
@@ -598,7 +637,7 @@ export default function Workbench() {
           />
 
           {/* ── Mobile-only: compact action bar below image ── */}
-          <div className="md:hidden shrink-0 px-3 py-2"
+          <div className="md:hidden shrink-0 px-4 py-2.5"
             style={{ background: '#0d0d1c', borderTop: '1px solid #1a1a30' }}>
             <div className="flex items-center gap-1.5 overflow-x-auto scroll-x-hidden">
               <ActionBtn
@@ -617,16 +656,10 @@ export default function Workbench() {
                 onClick={translateAll} disabled={!ocrResults.length || busy} variant="default"
               />
               <ActionBtn
-                icon={<Type size={13} />}
-                label={textReplaceMode ? '退出替换' : '替换'}
-                onClick={toggleTextReplace} disabled={!hasTranslations}
+                icon={inpainting ? <span className="spinner" /> : <Type size={13} />}
+                label={inpainting ? '消除中...' : textReplaceMode ? '退出替换' : '替换'}
+                onClick={toggleTextReplace} disabled={!hasTranslations || busy}
                 variant={textReplaceMode ? 'active' : 'default'}
-              />
-              <ActionBtn
-                icon={inpainting ? <span className="spinner" /> : <Eraser size={13} />}
-                label={inpainting ? '消除中...' : '消除'}
-                onClick={performInpaint} disabled={!ocrResults.length || busy}
-                variant={inpaintedUrl ? 'active' : 'default'}
               />
               <ActionBtn
                 icon={<Trash2 size={13} />}
@@ -666,7 +699,7 @@ export default function Workbench() {
               borderTop: mobileDrawerOpen ? '1px solid #1a1a30' : 'none',
             }}>
             {/* Lang + controls row */}
-            <div className="px-3 pt-2.5 pb-2 flex items-center gap-2 flex-wrap"
+            <div className="px-4 pt-3 pb-2.5 flex items-center gap-2 flex-wrap"
               style={{ borderBottom: '1px solid #141428' }}>
               <LangSelect value={sourceLanguage} onChange={setSourceLanguage} options={[
                 { value: 'japan', label: '日语' }, { value: 'en', label: '英语' },
@@ -688,7 +721,7 @@ export default function Workbench() {
               </div>
             </div>
             {/* Results */}
-            <div className="overflow-y-auto px-3 py-2" style={{ maxHeight: 'calc(48dvh - 52px)' }}>
+            <div className="overflow-y-auto px-4 py-2.5" style={{ maxHeight: 'calc(48dvh - 54px)' }}>
               <ResultsList
                 ocrResults={ocrResults} hasImage={!!imageUrl}
                 selectedIdx={selectedIdx} selectedForDelete={selectedForDelete}
@@ -703,7 +736,7 @@ export default function Workbench() {
           style={{ width: 420, background: '#0d0d1c', borderLeft: '1px solid #1a1a30' }}>
 
           {/* Action bar */}
-          <div className="shrink-0 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid #1a1a30' }}>
+          <div className="shrink-0 px-5 pt-5 pb-4" style={{ borderBottom: '1px solid #1a1a30' }}>
             <div className="flex gap-1.5 flex-wrap">
               <ActionBtn
                 icon={pipelineRunning ? <span className="spinner" /> : <Zap size={13} />}
@@ -721,15 +754,9 @@ export default function Workbench() {
                 onClick={translateAll} disabled={!ocrResults.length || busy} variant="default"
               />
               <ActionBtn
-                icon={inpainting ? <span className="spinner" /> : <Eraser size={13} />}
-                label={inpainting ? '消除中...' : inpaintedUrl ? '重新消除' : '消除'}
-                onClick={performInpaint} disabled={!ocrResults.length || busy}
-                variant={inpaintedUrl ? 'active' : 'default'}
-              />
-              <ActionBtn
-                icon={<Type size={13} />}
-                label={textReplaceMode ? '退出替换' : '替换'}
-                onClick={toggleTextReplace} disabled={!hasTranslations}
+                icon={inpainting ? <span className="spinner" /> : <Type size={13} />}
+                label={inpainting ? '消除中...' : textReplaceMode ? '退出替换' : '替换'}
+                onClick={toggleTextReplace} disabled={!hasTranslations || busy}
                 variant={textReplaceMode ? 'active' : 'default'}
               />
               <ActionBtn
@@ -814,7 +841,7 @@ export default function Workbench() {
           </div>
 
           {/* Desktop results list */}
-          <div className="flex-1 overflow-y-auto px-4 py-3">
+          <div className="flex-1 overflow-y-auto px-5 py-4">
             <ResultsList
               ocrResults={ocrResults} hasImage={!!imageUrl}
               selectedIdx={selectedIdx} selectedForDelete={selectedForDelete}
@@ -864,6 +891,7 @@ type ImagePanelProps = {
   textReplaceMode: boolean
   selectedIdx: number | null
   selectedForDelete: Set<number>
+  boxTextColors: Record<number, string>
   getBoxStyle: (bbox: [number, number, number, number]) => React.CSSProperties
   handleBoxClick: (idx: number) => void
   setTextFitRef: (idx: number) => RefCallback<HTMLElement>
@@ -882,22 +910,8 @@ function ImagePanelWrapper(props: ImagePanelProps) {
 function ImagePanel({
   containerRef, imgRef, imageUrl, inpaintedUrl, ocrResults,
   showBoxes, textReplaceMode, selectedIdx, selectedForDelete,
-  getBoxStyle, handleBoxClick, setTextFitRef, onUploadClick,
-}: {
-  containerRef: React.RefObject<HTMLDivElement | null>
-  imgRef: React.RefObject<HTMLImageElement | null>
-  imageUrl: string
-  inpaintedUrl: string
-  ocrResults: OcrResult[]
-  showBoxes: boolean
-  textReplaceMode: boolean
-  selectedIdx: number | null
-  selectedForDelete: Set<number>
-  getBoxStyle: (bbox: [number, number, number, number]) => React.CSSProperties
-  handleBoxClick: (idx: number) => void
-  setTextFitRef: (idx: number) => RefCallback<HTMLElement>
-  onUploadClick: () => void
-}) {
+  boxTextColors, getBoxStyle, handleBoxClick, setTextFitRef, onUploadClick,
+}: ImagePanelProps) {
   return (
     <div
       ref={containerRef}
@@ -950,7 +964,7 @@ function ImagePanel({
                         ref={setTextFitRef(result.id)}
                         style={{
                           width: '100%', height: '100%',
-                          color: inpaintedUrl ? '#111' : '#fff',
+                          color: boxTextColors[result.id] ?? (inpaintedUrl ? '#111' : '#fff'),
                           opacity: 0, padding: '2px',
                         }}
                       />
@@ -1016,7 +1030,7 @@ function ResultsList({ ocrResults, hasImage, selectedIdx, selectedForDelete, han
         const isDelSel = selectedForDelete.has(i)
         return (
           <div key={result.id} onClick={() => handleBoxClick(i)}
-            className="ocr-box rounded-xl p-3 cursor-pointer selectable"
+            className="ocr-box rounded-xl p-3.5 cursor-pointer selectable"
             style={{
               background: isDelSel ? 'rgba(239,68,68,0.07)' : isSelected ? 'rgba(99,102,241,0.1)' : '#111122',
               border: `1px solid ${isDelSel ? 'rgba(239,68,68,0.35)' : isSelected ? 'rgba(99,102,241,0.4)' : '#181830'}`,

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api import ocr
-from api import settings as settings_api
+# settings API removed — LLM config now managed by frontend localStorage
 from core.config import settings
 
 app = FastAPI(title="Manga Translator API", version="1.0.0")
@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 app.include_router(ocr.router, prefix="/api/ocr", tags=["OCR"])
-app.include_router(settings_api.router, prefix="/api/settings", tags=["Settings"])
+# app.include_router(settings_api.router, ...) — removed, config is client-side
 
 
 @app.get("/")
