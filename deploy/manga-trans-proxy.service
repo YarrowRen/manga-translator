@@ -1,0 +1,26 @@
+[Unit]
+Description=manga-trans proxy server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/manga-trans/deploy
+ExecStart=/usr/bin/node /opt/manga-trans/deploy/proxy-server.cjs
+Restart=always
+RestartSec=5
+
+# 环境变量（按需取消注释）
+# Environment=PROXY_PORT=3001
+# Environment=HTTPS_PROXY=http://127.0.0.1:7890
+
+# 资源限制
+MemoryMax=128M
+LimitNOFILE=65536
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

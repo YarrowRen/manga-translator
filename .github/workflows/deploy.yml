@@ -1,0 +1,36 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "==> pull latest code"
+            cd /opt/manga-trans
+            git pull origin master
+
+            echo "==> build frontend"
+            cd app
+            npm ci
+            npm run build
+
+            echo "==> deploy dist"
+            cp -r dist/. /var/www/manga-trans/dist/
+
+            echo "==> restart proxy service"
+            systemctl restart manga-trans-proxy
+
+            echo "==> done"
