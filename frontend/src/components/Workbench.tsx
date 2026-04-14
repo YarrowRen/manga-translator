@@ -384,6 +384,13 @@ export default function Workbench() {
           indices.forEach(i => next.splice(i, 1))
           return next.map((r, i) => ({ ...r, id: i }))
         })
+        // 删除后消除图失效，清除并退出替换模式
+        setInpaintedUrl(currentId, '')
+        if (textReplaceMode) {
+          setTextReplaceMode(false)
+          textFitRefs.current = {}
+          textFitApplied.current = new Set()
+        }
         showToast(`已删除 ${selectedForDelete.size} 个识别结果`, 'success')
       }
       setDeleteMode(false)
@@ -922,7 +929,7 @@ function ImagePanel({
         <>
           <img
             ref={imgRef}
-            src={inpaintedUrl || imageUrl}
+            src={textReplaceMode ? (inpaintedUrl || imageUrl) : imageUrl}
             alt="manga page"
             style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
           />
