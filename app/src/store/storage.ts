@@ -13,11 +13,19 @@ interface Stored<T> {
 
 export async function computeFileHash(file: File): Promise<string> {
   const buf = await file.slice(0, 65536).arrayBuffer()
-  const hash = await crypto.subtle.digest('SHA-1', buf)
-  return Array.from(new Uint8Array(hash))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 16)
+  // crypto.subtle 仅在 HTTPS / localhost 下可用；HTTP 下使用 FNV-1a 作为 fallback
+  if (crypto?.subtle) {
+    const hash = await crypto.subtle.digest('SHA-1', buf)
+    return Array.from(new Uint8Array(hash))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+      .slice(0, 16)
+  }
+  // FNV-1a 32-bit — 足够作为缓存 key，无需密码学强度
+  const bytes = new Uint8Array(buf)
+  let h = 0x811c9dc5
+  for (const b of bytes) h = Math.imul(h ^ b, 0x01000193) >>> 0
+  return h.toString(16).padStart(8, '0') + file.size.toString(16).padStart(8, '0')
 }
 
 // ── OCR results → localStorage (24 h TTL) ────────────────────────────────────
