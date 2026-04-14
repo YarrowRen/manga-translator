@@ -8,9 +8,13 @@ import { translateBatch } from '../services/translationService'
 import { inpaintRegions } from '../services/inpaintService'
 import { recognizeText } from '../services/ocrService'
 import {
+  parseGalleryUrl, fetchGalleryInfo, fetchGalleryPages,
+  type GalleryInfo,
+} from '../services/ehentaiService'
+import {
   Upload, FolderOpen, ScanText, Languages, Type,
   Trash2, Settings, ChevronLeft, ChevronRight, X,
-  Zap, ChevronDown, Check, AlertCircle, Info,
+  Zap, ChevronDown, Check, AlertCircle, Info, Link,
 } from 'lucide-react'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,6 +25,12 @@ interface OcrParams {
   det_limit_type: 'max' | 'min'
   det_limit_side_len: number
   confidence_threshold: number
+}
+
+interface MergeParams {
+  mergeExpandRatio: number
+  mergeMaxDistance: number
+  mergeMinGroupSize: number
 }
 
 type ToastType = 'info' | 'success' | 'error'
@@ -99,7 +109,7 @@ export default function Workbench() {
   const navigate = useNavigate()
   const {
     images, imageIds, currentIdx, ocrResults, inpaintedUrl, hashedAll,
-    addImages, setCurrentIdx, setOcrResults, setInpaintedUrl, resetPageData,
+    addImages, clearImages, setCurrentIdx, setOcrResults, setInpaintedUrl, resetPageData,
   } = useWorkbench()
 
   const currentImage = images[currentIdx]
@@ -143,6 +153,13 @@ export default function Workbench() {
     confidence_threshold: 0.7,
   })
 
+  // Merge params
+  const [mergeParams, setMergeParams] = useState<MergeParams>({
+    mergeExpandRatio: 1.05,
+    mergeMaxDistance: 10,
+    mergeMinGroupSize: 2,
+  })
+
   // Text fit
   const textFitRefs = useRef<Record<number, HTMLElement | null>>({})
   const textFitApplied = useRef<Set<number>>(new Set())
@@ -163,6 +180,55 @@ export default function Workbench() {
     setToasts(prev => [...prev.slice(-2), { id, msg, type }])
     if (type !== 'error') setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration)
   }, [])
+
+  // Gallery (e-hentai / exhentai URL 加载)
+  const [galleryUrlInput, setGalleryUrlInput] = useState('')
+  const [galleryLoading, setGalleryLoading] = useState(false)
+  const [gallery, setGallery] = useState<GalleryInfo & { loadedCount: number } | null>(null)
+  const [showUrlInput, setShowUrlInput] = useState(false)
+
+  // 当接近已加载末尾时，自动加载后续页
+  useEffect(() => {
+    if (!gallery || galleryLoading) return
+    const remaining = gallery.totalPages - gallery.loadedCount
+    if (remaining <= 0) return
+    // 已导航到倒数第 2 张时触发加载下一批（3页）
+    if (currentIdx >= gallery.loadedCount - 2) {
+      const from = gallery.loadedCount + 1
+      const to = Math.min(from + 2, gallery.totalPages)
+      setGalleryLoading(true)
+      fetchGalleryPages(gallery, from, to, p => showToast(`加载第 ${p} 页...`, 'info', 1500))
+        .then(files => {
+          if (files.length) addImages(files)
+          setGallery(g => g ? { ...g, loadedCount: g.loadedCount + files.length } : g)
+        })
+        .catch(e => showToast(`加载失败: ${e.message}`, 'error'))
+        .finally(() => setGalleryLoading(false))
+    }
+  }, [currentIdx, gallery]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleGalleryLoad = async () => {
+    const parsed = parseGalleryUrl(galleryUrlInput.trim())
+    if (!parsed) { showToast('URL 格式不正确，应为 e-hentai.org/g/{id}/{token}/', 'error'); return }
+    setGalleryLoading(true)
+    try {
+      const info = await fetchGalleryInfo(parsed.gid, parsed.token, parsed.isEx)
+      clearImages()
+      setGallery(null)
+      showToast(`加载画廊：${info.title}（共 ${info.totalPages} 页）`, 'info', 4000)
+      const preloadTo = Math.min(3, info.totalPages)
+      const files = await fetchGalleryPages(info, 1, preloadTo, p => showToast(`加载第 ${p} 页...`, 'info', 1500))
+      await addImages(files)
+      setGallery({ ...info, loadedCount: files.length })
+      setCurrentIdx(0)
+      setShowUrlInput(false)
+      setGalleryUrlInput('')
+    } catch (e: any) {
+      showToast(e.message || '画廊加载失败', 'error')
+    } finally {
+      setGalleryLoading(false)
+    }
+  }
 
   // Refs
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -247,7 +313,7 @@ export default function Workbench() {
     showToast('正在进行 OCR 识别...', 'info')
     try {
       const base64 = await fileToBase64(currentImage)
-      const rawResults = await recognizeText(base64, { language: sourceLanguage, ...ocrParams })
+      const rawResults = await recognizeText(base64, { language: sourceLanguage, ...ocrParams, ...mergeParams })
       const results: OcrResult[] = rawResults.map((r, i) => ({
         id: i, text: r.text, confidence: r.confidence,
         bbox: r.bbox as [number, number, number, number],
@@ -325,7 +391,7 @@ export default function Workbench() {
       const base64 = await fileToBase64(currentImage)
 
       // Step 1: OCR
-      const rawResults = await recognizeText(base64, { language: sourceLanguage, ...ocrParams })
+      const rawResults = await recognizeText(base64, { language: sourceLanguage, ...ocrParams, ...mergeParams })
       if (!rawResults.length) { showToast('未检测到文字', 'info'); return }
       const results: OcrResult[] = rawResults.map((r, i) => ({
         id: i, text: r.text, confidence: r.confidence,
@@ -549,6 +615,46 @@ export default function Workbench() {
         {/* Upload buttons */}
         <HeaderBtn icon={<Upload size={13} />} label="上传图片" shortLabel onClick={() => fileInputRef.current?.click()} />
         <HeaderBtn icon={<FolderOpen size={13} />} label="上传文件夹" shortLabel onClick={() => folderInputRef.current?.click()} />
+        <HeaderBtn icon={<Link size={13} />} label="输入 URL" shortLabel onClick={() => setShowUrlInput(v => !v)} />
+
+        {/* URL input popup */}
+        {showUrlInput && (
+          <div className="flex items-center gap-1.5 fade-in">
+            <input
+              type="text"
+              value={galleryUrlInput}
+              onChange={e => setGalleryUrlInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !galleryLoading && handleGalleryLoad()}
+              placeholder="https://e-hentai.org/g/..."
+              className="px-3 py-1.5 rounded-lg text-xs outline-none"
+              style={{
+                background: '#111122', border: '1px solid #1a1a35',
+                color: '#c0c0e8', width: '260px',
+              }}
+              autoFocus
+            />
+            <button
+              onClick={handleGalleryLoad}
+              disabled={galleryLoading || !galleryUrlInput.trim()}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+              style={{ background: 'rgba(99,102,241,0.2)', color: '#a0a0f8', border: '1px solid rgba(99,102,241,0.3)' }}>
+              {galleryLoading ? '加载中...' : '加载'}
+            </button>
+            <button onClick={() => setShowUrlInput(false)}
+              className="w-6 h-6 flex items-center justify-center rounded-lg"
+              style={{ color: '#3a3a60' }}>
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
+        {/* Gallery info badge */}
+        {gallery && !showUrlInput && (
+          <span className="text-xs px-2 py-1 rounded-lg hidden md:inline truncate max-w-[200px]"
+            style={{ background: 'rgba(99,102,241,0.1)', color: '#7070c0', border: '1px solid rgba(99,102,241,0.15)' }}>
+            {gallery.title}
+          </span>
+        )}
 
         {/* Page navigation */}
         {images.length > 0 && (
@@ -561,7 +667,11 @@ export default function Workbench() {
               <ChevronLeft size={14} />
             </button>
             <span className="text-xs px-2 tabular-nums" style={{ color: '#6060a0' }}>
-              {currentIdx + 1}<span style={{ color: '#3a3a60' }}>/</span>{images.length}
+              {currentIdx + 1}<span style={{ color: '#3a3a60' }}>/</span>
+              {gallery ? gallery.totalPages : images.length}
+              {gallery && gallery.loadedCount < gallery.totalPages && (
+                <span style={{ color: '#3a3a50' }}> ({gallery.loadedCount}↓)</span>
+              )}
             </span>
             <button
               onClick={() => setCurrentIdx(Math.min(images.length - 1, currentIdx + 1))}
@@ -805,44 +915,83 @@ export default function Workbench() {
             </div>
 
             {showAdvanced && (
-              <div className="mt-2.5 grid grid-cols-3 gap-2 fade-in">
-                {[
-                  {
-                    label: '检测模式', type: 'select' as const,
-                    value: ocrParams.det_limit_type,
-                    options: [{ value: 'max', label: 'max' }, { value: 'min', label: 'min' }],
-                    onChange: (v: string) => setOcrParams(p => ({ ...p, det_limit_type: v as 'max' | 'min' })),
-                  },
-                  {
-                    label: '边长限制', type: 'number' as const,
-                    value: ocrParams.det_limit_side_len,
-                    min: 320, max: 2880, step: 40,
-                    onChange: (v: string) => setOcrParams(p => ({ ...p, det_limit_side_len: +v })),
-                  },
-                  {
-                    label: '置信度', type: 'number' as const,
-                    value: ocrParams.confidence_threshold,
-                    min: 0, max: 1, step: 0.05,
-                    onChange: (v: string) => setOcrParams(p => ({ ...p, confidence_threshold: +v })),
-                  },
-                ].map(f => (
-                  <div key={f.label}>
-                    <label className="block text-xs mb-1" style={{ color: '#3a3a60' }}>{f.label}</label>
-                    {f.type === 'select' ? (
-                      <select value={f.value as string} onChange={e => f.onChange(e.target.value)}
-                        className="w-full text-xs px-2 py-1.5 rounded-lg outline-none"
-                        style={{ background: '#13132a', border: '1px solid #1e1e38', color: '#8080c0' }}>
-                        {f.options!.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    ) : (
-                      <input type="number" value={f.value as number}
-                        min={f.min} max={f.max} step={f.step}
-                        onChange={e => f.onChange(e.target.value)}
-                        className="w-full text-xs px-2 py-1.5 rounded-lg outline-none"
-                        style={{ background: '#13132a', border: '1px solid #1e1e38', color: '#8080c0' }} />
-                    )}
+              <div className="mt-2.5 flex flex-col gap-2 fade-in">
+                {/* OCR 参数 */}
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    {
+                      label: '检测模式', type: 'select' as const,
+                      value: ocrParams.det_limit_type,
+                      options: [{ value: 'max', label: 'max' }, { value: 'min', label: 'min' }],
+                      onChange: (v: string) => setOcrParams(p => ({ ...p, det_limit_type: v as 'max' | 'min' })),
+                    },
+                    {
+                      label: '边长限制', type: 'number' as const,
+                      value: ocrParams.det_limit_side_len,
+                      min: 320, max: 2880, step: 40,
+                      onChange: (v: string) => setOcrParams(p => ({ ...p, det_limit_side_len: +v })),
+                    },
+                    {
+                      label: '置信度', type: 'number' as const,
+                      value: ocrParams.confidence_threshold,
+                      min: 0, max: 1, step: 0.05,
+                      onChange: (v: string) => setOcrParams(p => ({ ...p, confidence_threshold: +v })),
+                    },
+                  ].map(f => (
+                    <div key={f.label}>
+                      <label className="block text-xs mb-1" style={{ color: '#3a3a60' }}>{f.label}</label>
+                      {f.type === 'select' ? (
+                        <select value={f.value as string} onChange={e => f.onChange(e.target.value)}
+                          className="w-full text-xs px-2 py-1.5 rounded-lg outline-none"
+                          style={{ background: '#13132a', border: '1px solid #1e1e38', color: '#8080c0' }}>
+                          {f.options!.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      ) : (
+                        <input type="number" value={f.value as number}
+                          min={f.min} max={f.max} step={f.step}
+                          onChange={e => f.onChange(e.target.value)}
+                          className="w-full text-xs px-2 py-1.5 rounded-lg outline-none"
+                          style={{ background: '#13132a', border: '1px solid #1e1e38', color: '#8080c0' }} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* 气泡合并参数 */}
+                <div style={{ borderTop: '1px solid #1a1a30' }} className="pt-2">
+                  <p className="text-xs mb-1.5" style={{ color: '#2a2a50' }}>气泡合并</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      {
+                        label: '扩展比例',
+                        value: mergeParams.mergeExpandRatio,
+                        min: 1.0, max: 2.0, step: 0.05,
+                        onChange: (v: string) => setMergeParams(p => ({ ...p, mergeExpandRatio: +v })),
+                      },
+                      {
+                        label: '最大距离',
+                        value: mergeParams.mergeMaxDistance,
+                        min: 0, max: 100, step: 1,
+                        onChange: (v: string) => setMergeParams(p => ({ ...p, mergeMaxDistance: +v })),
+                      },
+                      {
+                        label: '最小组大小',
+                        value: mergeParams.mergeMinGroupSize,
+                        min: 2, max: 10, step: 1,
+                        onChange: (v: string) => setMergeParams(p => ({ ...p, mergeMinGroupSize: +v })),
+                      },
+                    ].map(f => (
+                      <div key={f.label}>
+                        <label className="block text-xs mb-1" style={{ color: '#3a3a60' }}>{f.label}</label>
+                        <input type="number" value={f.value}
+                          min={f.min} max={f.max} step={f.step}
+                          onChange={e => f.onChange(e.target.value)}
+                          className="w-full text-xs px-2 py-1.5 rounded-lg outline-none"
+                          style={{ background: '#13132a', border: '1px solid #1e1e38', color: '#8080c0' }} />
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
             )}
           </div>

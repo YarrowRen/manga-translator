@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, Wifi, Eye, EyeOff, Check, AlertCircle } from 'lucide-react'
 import { loadLLMConfig, saveLLMConfig, type LLMConfig } from '../services/llmConfig'
 import { loadOCRConfig, saveOCRConfig, type OCRConfig } from '../services/ocrConfig'
+import { loadEhentaiConfig, saveEhentaiConfig, type EhentaiConfig } from '../services/ehentaiConfig'
 import { testLLMConnection } from '../services/translationService'
 
 export default function SettingsPanel() {
@@ -21,6 +22,25 @@ export default function SettingsPanel() {
   const [showToken, setShowToken] = useState(false)
   const [ocrSaving, setOcrSaving] = useState(false)
   const [ocrSaveStatus, setOcrSaveStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+
+  // ExHentai 配置
+  const [ehConfig, setEhConfig] = useState<EhentaiConfig>(loadEhentaiConfig)
+  const [showPassHash, setShowPassHash] = useState(false)
+  const [ehSaving, setEhSaving] = useState(false)
+  const [ehSaveStatus, setEhSaveStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+
+  const handleEhSave = () => {
+    setEhSaving(true)
+    setEhSaveStatus(null)
+    try {
+      saveEhentaiConfig(ehConfig)
+      setEhSaveStatus({ type: 'success', msg: 'ExHentai 配置已保存' })
+    } catch {
+      setEhSaveStatus({ type: 'error', msg: '保存失败' })
+    } finally {
+      setEhSaving(false)
+    }
+  }
 
   const handleOCRSave = () => {
     setOcrSaving(true)
@@ -248,6 +268,84 @@ export default function SettingsPanel() {
             </button>
             {ocrSaveStatus && (
               <StatusBadge type={ocrSaveStatus.type} msg={ocrSaveStatus.msg} onClose={() => setOcrSaveStatus(null)} />
+            )}
+          </div>
+        </div>
+
+        {/* ExHentai 配置卡片 */}
+        <div className="rounded-2xl overflow-hidden mt-6"
+          style={{ background: '#0d0d1c', border: '1px solid #1a1a30' }}>
+
+          <div className="px-6 py-5" style={{ borderBottom: '1px solid #141428' }}>
+            <h2 className="text-base font-semibold mb-1" style={{ color: '#d0d0f0' }}>
+              E-hentai / ExHentai 配置
+            </h2>
+            <p className="text-xs leading-relaxed" style={{ color: '#3a3a60' }}>
+              用于通过 URL 加载画廊。优先使用 e-hentai，失败时自动切换 exhentai。
+              从浏览器登录后的 Cookie 中获取以下字段。
+            </p>
+          </div>
+
+          <div className="px-6 py-5 flex flex-col gap-4">
+
+            <FormField label="member_id">
+              <input
+                type="text"
+                value={ehConfig.member_id}
+                onChange={e => setEhConfig(c => ({ ...c, member_id: e.target.value }))}
+                placeholder="123456"
+                className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none font-mono"
+                style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
+                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
+              />
+            </FormField>
+
+            <FormField label="pass_hash">
+              <div className="relative">
+                <input
+                  type={showPassHash ? 'text' : 'password'}
+                  value={ehConfig.pass_hash}
+                  onChange={e => setEhConfig(c => ({ ...c, pass_hash: e.target.value }))}
+                  placeholder="a1b2c3d4e5..."
+                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl text-sm outline-none font-mono"
+                  style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
+                  onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
+                  onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
+                />
+                <button onClick={() => setShowPassHash(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center"
+                  style={{ color: '#3a3a60' }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#6060a0')}
+                  onMouseLeave={e => (e.currentTarget.style.color = '#3a3a60')}>
+                  {showPassHash ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </FormField>
+
+            <FormField label="igneous（ExHentai 专用，可选）">
+              <input
+                type="text"
+                value={ehConfig.igneous}
+                onChange={e => setEhConfig(c => ({ ...c, igneous: e.target.value }))}
+                placeholder="留空则仅访问 e-hentai"
+                className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none font-mono"
+                style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
+                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
+              />
+            </FormField>
+          </div>
+
+          <div className="px-6 pt-1 pb-6 flex flex-col gap-3">
+            <button onClick={handleEhSave} disabled={ehSaving}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium justify-center disabled:opacity-50"
+              style={{ background: 'linear-gradient(135deg, #5254e8 0%, #7c7ef0 100%)', color: '#fff' }}>
+              {ehSaving ? <span className="spinner" /> : <Save size={14} />}
+              {ehSaving ? '保存中...' : '保存配置'}
+            </button>
+            {ehSaveStatus && (
+              <StatusBadge type={ehSaveStatus.type} msg={ehSaveStatus.msg} onClose={() => setEhSaveStatus(null)} />
             )}
           </div>
         </div>

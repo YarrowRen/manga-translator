@@ -35,6 +35,7 @@ interface WorkbenchContextValue {
   hashedAll: boolean       // true once all current images have IDs
 
   addImages: (files: File[]) => Promise<void>
+  clearImages: () => void
   setCurrentIdx: (idx: number) => void
   setOcrResults: (imageId: string, results: OcrResult[] | ((prev: OcrResult[]) => OcrResult[])) => void
   setInpaintedUrl: (imageId: string, url: string) => void
@@ -90,6 +91,15 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     setCache(prev => ({ ...prev, ...newCache }))
   }, [imageIds])
 
+  // ── Clear all images ────────────────────────────────────────────────────────
+
+  const clearImages = useCallback(() => {
+    setImages([])
+    setImageIds([])
+    setCache({})
+    setCurrentIdxState(0)
+  }, [])
+
   // ── Navigation ──────────────────────────────────────────────────────────────
 
   const setCurrentIdx = useCallback((idx: number) => {
@@ -140,6 +150,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       inpaintedUrl: currentCache.inpaintedUrl,
       hashedAll,
       addImages,
+      clearImages,
       setCurrentIdx,
       setOcrResults,
       setInpaintedUrl,

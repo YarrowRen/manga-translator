@@ -23,11 +23,17 @@ export interface OcrApiResult {
 
 export async function recognizeText(
   base64: string,
-  _params: Record<string, unknown>,
+  params: Record<string, unknown>,
 ): Promise<OcrApiResult[]> {
   const cfg = loadOCRConfig()
   if (!cfg.api_token) throw new Error('请先在设置页配置 PaddleOCR API Token')
-  return recognizeCloud(base64, cfg.api_token, cfg.model || 'PP-OCRv5')
+  const raw = await recognizeCloud(base64, cfg.api_token, cfg.model || 'PP-OCRv5')
+
+  // 允许调用方覆盖合并参数
+  const expandRatio  = typeof params.mergeExpandRatio  === 'number' ? params.mergeExpandRatio  : undefined
+  const maxDistance  = typeof params.mergeMaxDistance  === 'number' ? params.mergeMaxDistance  : undefined
+  const minGroupSize = typeof params.mergeMinGroupSize === 'number' ? params.mergeMinGroupSize : undefined
+  return mergeOcrResults(raw, expandRatio, maxDistance, minGroupSize)
 }
 
 // ── PaddleOCR 云端直调 ────────────────────────────────────────────────────────
@@ -80,8 +86,7 @@ async function recognizeCloud(
   const proxiedJsonlUrl = jsonlUrl.replace('https://bj.bcebos.com', '/bcebos-proxy')
   const resultRes = await fetch(proxiedJsonlUrl)
   if (!resultRes.ok) throw new Error(`结果下载失败: ${resultRes.status}`)
-  const raw = parseCloudJsonl(await resultRes.text())
-  return mergeOcrResults(raw)
+  return parseCloudJsonl(await resultRes.text())
 }
 
 // ── JSONL 解析（兼容 PaddleX / PP-OCRv3 / PP-OCRv5 输出格式）─────────────────
@@ -181,8 +186,8 @@ function findConnected(
 
 function mergeOcrResults(
   items: OcrApiResult[],
-  expandRatio = 1.2,
-  maxDistance = 30,
+  expandRatio = 1.05,
+  maxDistance = 10,
   minGroupSize = 2,
 ): OcrApiResult[] {
   if (!items.length) return []
@@ -236,9 +241,29 @@ function mergeOcrResults(
     }
   }
 
-  // 与后端一致：按置信度降序排列
-  merged.sort((a, b) => b.confidence - a.confidence)
-  return merged
+  // 按漫画阅读顺序：先按 maxX 聚类成列（右→左），再列内按 minY 排序（上→下）
+  // 列边界阈值 = 平均气泡宽度 * 1.4，自适应不同页面
+  const avgWidth = merged.reduce((s, r) => s + (r.bbox[2] - r.bbox[0]), 0) / merged.length
+  const colThreshold = avgWidth * 1.4
+
+  const sortedByX = [...merged].sort((a, b) => b.bbox[2] - a.bbox[2])
+  const columns: (typeof merged)[] = []
+  let currentCol: typeof merged = []
+
+  for (const r of sortedByX) {
+    if (currentCol.length === 0 || currentCol[0].bbox[2] - r.bbox[2] < colThreshold) {
+      currentCol.push(r)
+    } else {
+      columns.push(currentCol)
+      currentCol = [r]
+    }
+  }
+  if (currentCol.length) columns.push(currentCol)
+
+  // 每列内按 minY 升序（上→下）
+  for (const col of columns) col.sort((a, b) => a.bbox[1] - b.bbox[1])
+
+  return columns.flat()
 }
 
 // ── 凸包（Graham scan，替代后端 cv2.convexHull）────────────────────────────────
