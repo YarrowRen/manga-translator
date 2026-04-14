@@ -126,7 +126,7 @@ export async function inpaintRegions(
       )
     })
 
-    ctx.putImageData(new ImageData(result, w, h), 0, 0)
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(result), w, h), 0, 0)
   }
 
   return canvas.toDataURL('image/png')
