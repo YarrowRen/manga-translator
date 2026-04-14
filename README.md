@@ -27,7 +27,7 @@
 ## 快速开始
 
 ```bash
-cd frontend
+cd app
 npm install
 npm run dev
 # 访问 http://localhost:5173
@@ -56,7 +56,7 @@ npm run dev
 
 ```
 manga-trans/
-└── frontend/
+└── app/
     └── src/
         ├── components/
         │   ├── Workbench.tsx          # 主翻译工作台
