@@ -196,66 +196,47 @@ export default function SettingsPanel() {
               OCR 配置
             </h2>
             <p className="text-xs leading-relaxed" style={{ color: '#3a3a60' }}>
-              本地模式调用后端 PaddleOCR（需启动后端）；云端模式直接调用 PaddleOCR 官方 API，无需本地安装。
+              调用 PaddleOCR 官方云端 API，需要 AI Studio API Token。
+              从 <span style={{ color: '#6060a0' }}>aistudio.baidu.com</span> 获取。
             </p>
           </div>
 
           <div className="px-6 py-5 flex flex-col gap-4">
 
-            {/* Provider 选择 */}
-            <FormField label="识别方式">
-              <div className="flex gap-2">
-                {(['local', 'cloud'] as const).map(p => (
-                  <button key={p}
-                    onClick={() => setOcrConfig(c => ({ ...c, provider: p }))}
-                    className="flex-1 py-2 rounded-xl text-xs font-medium transition-colors"
-                    style={{
-                      background: ocrConfig.provider === p ? 'rgba(99,102,241,0.15)' : '#111122',
-                      border: `1px solid ${ocrConfig.provider === p ? 'rgba(99,102,241,0.5)' : '#1a1a35'}`,
-                      color: ocrConfig.provider === p ? '#a0a0f8' : '#404070',
-                    }}>
-                    {p === 'local' ? '本地后端' : '云端 API'}
-                  </button>
-                ))}
-              </div>
-            </FormField>
-
-            {ocrConfig.provider === 'cloud' && (<>
-              <FormField label="API Token">
-                <div className="relative">
-                  <input
-                    type={showToken ? 'text' : 'password'}
-                    value={ocrConfig.api_token}
-                    onChange={e => setOcrConfig(c => ({ ...c, api_token: e.target.value }))}
-                    placeholder="ae6e707c..."
-                    className="w-full px-3.5 py-2.5 pr-10 rounded-xl text-sm outline-none"
-                    style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
-                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
-                    onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
-                  />
-                  <button onClick={() => setShowToken(v => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center"
-                    style={{ color: '#3a3a60' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = '#6060a0')}
-                    onMouseLeave={e => (e.currentTarget.style.color = '#3a3a60')}>
-                    {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                </div>
-              </FormField>
-
-              <FormField label="模型">
+            <FormField label="API Token">
+              <div className="relative">
                 <input
-                  type="text"
-                  value={ocrConfig.model}
-                  onChange={e => setOcrConfig(c => ({ ...c, model: e.target.value }))}
-                  placeholder="PP-OCRv5"
-                  className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
+                  type={showToken ? 'text' : 'password'}
+                  value={ocrConfig.api_token}
+                  onChange={e => setOcrConfig(c => ({ ...c, api_token: e.target.value }))}
+                  placeholder="ae6e707c..."
+                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl text-sm outline-none"
                   style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
                   onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
                   onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
                 />
-              </FormField>
-            </>)}
+                <button onClick={() => setShowToken(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center"
+                  style={{ color: '#3a3a60' }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#6060a0')}
+                  onMouseLeave={e => (e.currentTarget.style.color = '#3a3a60')}>
+                  {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </FormField>
+
+            <FormField label="模型">
+              <input
+                type="text"
+                value={ocrConfig.model}
+                onChange={e => setOcrConfig(c => ({ ...c, model: e.target.value }))}
+                placeholder="PP-OCRv5"
+                className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
+                style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
+                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
+                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
+              />
+            </FormField>
           </div>
 
           <div className="px-6 pt-1 pb-6 flex flex-col gap-3">

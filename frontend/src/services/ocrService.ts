@@ -1,14 +1,12 @@
 /**
- * OCR 服务 — 根据配置选择本地后端或 PaddleOCR 官方云端 API
+ * OCR 服务 — 直接调用 PaddleOCR 官方云端 API
  *
- * provider='local'  → POST /api/ocr/recognize（后端 PaddleOCR，需启动后端）
- * provider='cloud'  → 直接调用 https://paddleocr.aistudio-app.com，无需后端
+ * 通过 Vite dev proxy（生产环境需配置 nginx 做同样转发）绕过 CORS
  */
 
-import axios from 'axios'
 import { loadOCRConfig } from './ocrConfig'
 
-// 通过 Vite dev proxy（生产环境需配置 nginx 做同样转发）绕过 CORS
+// 通过 Vite dev proxy 绕过 CORS
 const CLOUD_JOB_URL = '/paddleocr-proxy/api/v2/ocr/jobs'
 
 export interface OcrApiResult {
@@ -25,19 +23,11 @@ export interface OcrApiResult {
 
 export async function recognizeText(
   base64: string,
-  params: Record<string, unknown>,
+  _params: Record<string, unknown>,
 ): Promise<OcrApiResult[]> {
   const cfg = loadOCRConfig()
-
-  if (cfg.provider === 'cloud') {
-    if (!cfg.api_token) throw new Error('请先在设置页配置 PaddleOCR API Token')
-    return recognizeCloud(base64, cfg.api_token, cfg.model || 'PP-OCRv5')
-  }
-
-  // 本地后端
-  const { data } = await axios.post('/api/ocr/recognize', { image_url: base64, ...params })
-  if (!data.success) throw new Error(data.error || '本地 OCR 失败')
-  return data.results
+  if (!cfg.api_token) throw new Error('请先在设置页配置 PaddleOCR API Token')
+  return recognizeCloud(base64, cfg.api_token, cfg.model || 'PP-OCRv5')
 }
 
 // ── PaddleOCR 云端直调 ────────────────────────────────────────────────────────

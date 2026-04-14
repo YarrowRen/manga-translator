@@ -11,10 +11,6 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': {
-        target: 'http://localhost:5002',
-        changeOrigin: true,
-      },
       // PaddleOCR 官方云 API 代理（绕过浏览器 CORS 及来源限制）
       '/paddleocr-proxy': {
         target: 'https://paddleocr.aistudio-app.com',
