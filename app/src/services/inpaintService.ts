@@ -113,7 +113,7 @@ export async function inpaintRegions(
       rgb[i * 3 + 2] = rgba[i * 4 + 2]
     }
 
-    const result = await new Promise<Uint8ClampedArray>((resolve, reject) => {
+    const result = await new Promise<Uint8ClampedArray<ArrayBuffer>>((resolve, reject) => {
       const handler = (e: MessageEvent) => {
         worker.removeEventListener('message', handler)
         if (e.data?.error) reject(new Error(e.data.error))
@@ -122,7 +122,7 @@ export async function inpaintRegions(
       worker.addEventListener('message', handler)
       worker.postMessage(
         { rgbData: rgb, maskData: complexMask, width: w, height: h },
-        [rgb.buffer, complexMask.buffer],
+        { transfer: [rgb.buffer as ArrayBuffer, complexMask.buffer as ArrayBuffer] },
       )
     })
 
