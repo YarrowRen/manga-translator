@@ -53,7 +53,7 @@ async function recognizeCloud(
   const ms = (from: number) => `${(performance.now() - from).toFixed(0)}ms`
 
   try {
-    const result = await recognizeCloudFast(base64, apiToken, model, t0, ms)
+    const result = await recognizeCloudFast(base64, apiToken, t0, ms)
     return result
   } catch (e: any) {
     console.warn(`[OCR] 同步接口失败 (${ms(t0)})，降级到异步接口: ${e.message}`)
@@ -66,20 +66,26 @@ async function recognizeCloud(
 async function recognizeCloudFast(
   base64: string,
   apiToken: string,
-  model: string,
   t0: number,
   ms: (from: number) => string,
 ): Promise<OcrApiResult[]> {
-  const { blob, ext } = dataUrlToBlob(base64)
-  const form = new FormData()
-  form.append('model', model)
-  form.append('file', blob, `image.${ext}`)
+  // 去掉 data URL 前缀，只保留纯 base64 字符串
+  const b64 = base64.includes(',') ? base64.split(',')[1] : base64
 
   const t1 = performance.now()
   const res = await fetch(CLOUD_FAST_URL, {
     method: 'POST',
-    headers: { Authorization: `bearer ${apiToken}` },
-    body: form,
+    headers: {
+      'Authorization': `token ${apiToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      file: b64,
+      fileType: 1,
+      useDocOrientationClassify: false,
+      useDocUnwarping: false,
+      useTextlineOrientation: false,
+    }),
   })
   if (!res.ok) {
     const text = await res.text()
