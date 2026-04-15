@@ -851,12 +851,11 @@ export default function Workbench() {
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <LangSelect value={sourceLanguage} onChange={setSourceLanguage} options={[
                 { value: 'japan', label: '日语' }, { value: 'en', label: '英语' },
-                { value: 'ch', label: '中文' }, { value: 'chinese_cht', label: '繁中' },
+                { value: 'ch', label: '中文' },
               ]} />
               <span style={{ color: 'var(--text-3)', fontSize: 12 }}>→</span>
               <LangSelect value={targetLanguage} onChange={setTargetLanguage} options={[
-                { value: 'zh', label: '中文' }, { value: 'en', label: '英语' },
-                { value: 'ja', label: '日语' },
+                { value: 'zh', label: '中文' },
               ]} />
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div onClick={() => setShowBoxes(v => !v)} style={{ width: 32, height: 16, borderRadius: 8, background: showBoxes ? 'var(--accent)' : 'var(--border)', cursor: 'pointer', position: 'relative', flexShrink: 0 }}>
@@ -918,12 +917,11 @@ export default function Workbench() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
               <LangSelect value={sourceLanguage} onChange={setSourceLanguage} options={[
                 { value: 'japan', label: '日语' }, { value: 'en', label: '英语' },
-                { value: 'ch', label: '中文' }, { value: 'chinese_cht', label: '繁中' },
+                { value: 'ch', label: '中文' },
               ]} />
               <span style={{ color: 'var(--text-3)', fontSize: 12 }}>→</span>
               <LangSelect value={targetLanguage} onChange={setTargetLanguage} options={[
-                { value: 'zh', label: '中文' }, { value: 'en', label: '英语' },
-                { value: 'ja', label: '日语' },
+                { value: 'zh', label: '中文' },
               ]} />
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', cursor: 'pointer' }}>
                 <div onClick={() => setShowBoxes(v => !v)} style={{ width: 32, height: 16, borderRadius: 8, background: showBoxes ? 'var(--accent)' : 'var(--border)', cursor: 'pointer', position: 'relative', flexShrink: 0 }}>

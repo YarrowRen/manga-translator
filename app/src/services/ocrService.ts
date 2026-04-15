@@ -395,7 +395,24 @@ function mergeOcrResults(
   // 每列内按 minY 升序（上→下）
   for (const col of columns) col.sort((a, b) => a.bbox[1] - b.bbox[1])
 
-  return columns.flat()
+  return filterOcrNoise(columns.flat())
+}
+
+// ── OCR 噪声过滤（合并后执行）────────────────────────────────────────────────
+// 过滤在合并后仍孤立、且无翻译价值的气泡：
+//   - 纯数字（页码、标注）
+//   - 单个 ASCII 字母
+//   - 纯符号/标点（不含任何 CJK 字符、字母、数字）
+const CJK_RE    = /[\u3040-\u9FFF\uAC00-\uD7AF]/          // 日文 + 汉字 + 韩文
+const NOISE_RE  = /^(?:\d+|[a-zA-Z]|[^\u3040-\u9FFF\uAC00-\uD7AFa-zA-Z0-9]+)$/
+
+function filterOcrNoise(items: OcrApiResult[]): OcrApiResult[] {
+  return items.filter(r => {
+    const t = r.text.trim()
+    if (!t) return false
+    if (CJK_RE.test(t)) return true   // 含 CJK → 保留
+    return !NOISE_RE.test(t)          // 匹配噪声模式 → 过滤
+  })
 }
 
 // ── 凸包（Graham scan，替代后端 cv2.convexHull）────────────────────────────────
