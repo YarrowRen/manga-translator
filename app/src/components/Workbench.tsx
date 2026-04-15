@@ -167,7 +167,7 @@ export default function Workbench() {
 
   // OCR params
   const [ocrParams, setOcrParams] = useState<OcrParams>({
-    det_limit_type: 'max',
+    det_limit_type: 'min',
     det_limit_side_len: 960,
     confidence_threshold: 0.7,
   })

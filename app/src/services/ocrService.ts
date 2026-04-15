@@ -33,13 +33,21 @@ export async function recognizeText(
 ): Promise<OcrApiResult[]> {
   const cfg = loadOCRConfig()
   if (!cfg.api_token) throw new Error('请先在设置页配置 PaddleOCR API Token')
-  const raw = await recognizeCloud(base64, cfg.api_token, cfg.model || 'PP-OCRv5')
 
-  // 允许调用方覆盖合并参数
-  const expandRatio  = typeof params.mergeExpandRatio  === 'number' ? params.mergeExpandRatio  : undefined
-  const maxDistance  = typeof params.mergeMaxDistance  === 'number' ? params.mergeMaxDistance  : undefined
-  const minGroupSize = typeof params.mergeMinGroupSize === 'number' ? params.mergeMinGroupSize : undefined
-  return mergeOcrResults(raw, expandRatio, maxDistance, minGroupSize)
+  // OCR API 参数（映射到官方文档字段名）
+  const apiParams = {
+    textDetLimitSideLen:  typeof params.det_limit_side_len    === 'number' ? params.det_limit_side_len    : undefined,
+    textDetLimitType:     typeof params.det_limit_type        === 'string' ? params.det_limit_type        : undefined,
+    textRecScoreThresh:   typeof params.confidence_threshold  === 'number' ? params.confidence_threshold  : 0.7,
+  }
+
+  const raw = await recognizeCloud(base64, cfg.api_token, cfg.model || 'PP-OCRv5', apiParams)
+
+  // 合并参数
+  const expandRatio        = typeof params.mergeExpandRatio   === 'number' ? params.mergeExpandRatio   : undefined
+  const maxDistance        = typeof params.mergeMaxDistance   === 'number' ? params.mergeMaxDistance   : undefined
+  const minGroupSize       = typeof params.mergeMinGroupSize  === 'number' ? params.mergeMinGroupSize  : undefined
+  return mergeOcrResults(raw, expandRatio, maxDistance, minGroupSize, apiParams.textRecScoreThresh)
 }
 
 // localhost / 127.0.0.1 判定为本地开发环境，直接走异步接口
@@ -47,10 +55,17 @@ const IS_LOCAL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
 
 // ── 入口分发：本地走异步，远端优先同步（失败降级异步）────────────────────────
 
+type OcrApiParams = {
+  textDetLimitSideLen?: number
+  textDetLimitType?: string
+  textRecScoreThresh?: number
+}
+
 async function recognizeCloud(
   base64: string,
   apiToken: string,
   model: string,
+  apiParams: OcrApiParams = {},
 ): Promise<OcrApiResult[]> {
   const t0 = performance.now()
   const ms = (from: number) => `${(performance.now() - from).toFixed(0)}ms`
@@ -62,13 +77,13 @@ async function recognizeCloud(
 
   let raw: OcrApiResult[]
   if (IS_LOCAL) {
-    raw = await recognizeCloudAsync(compressed, apiToken, model, t0, ms)
+    raw = await recognizeCloudAsync(compressed, apiToken, model, apiParams, t0, ms)
   } else {
     try {
-      raw = await recognizeCloudFast(compressed, apiToken, t0, ms)
+      raw = await recognizeCloudFast(compressed, apiToken, apiParams, t0, ms)
     } catch (e: any) {
       console.warn(`[OCR] 同步接口失败 (${ms(t0)})，降级到异步接口: ${e.message}`)
-      raw = await recognizeCloudAsync(compressed, apiToken, model, t0, ms)
+      raw = await recognizeCloudAsync(compressed, apiToken, model, apiParams, t0, ms)
     }
   }
 
@@ -119,6 +134,7 @@ function scaleOcrResult(r: OcrApiResult, factor: number): OcrApiResult {
 async function recognizeCloudFast(
   base64: string,
   apiToken: string,
+  apiParams: OcrApiParams,
   t0: number,
   ms: (from: number) => string,
 ): Promise<OcrApiResult[]> {
@@ -138,6 +154,7 @@ async function recognizeCloudFast(
       useDocOrientationClassify: false,
       useDocUnwarping: false,
       useTextlineOrientation: false,
+      ...apiParams,
     }),
   })
   if (!res.ok) {
@@ -157,6 +174,7 @@ async function recognizeCloudAsync(
   base64: string,
   apiToken: string,
   model: string,
+  apiParams: OcrApiParams,
   t0: number,
   ms: (from: number) => string,
 ): Promise<OcrApiResult[]> {
@@ -170,6 +188,7 @@ async function recognizeCloudAsync(
     useDocOrientationClassify: false,
     useDocUnwarping: false,
     useTextlineOrientation: false,
+    ...apiParams,
   }))
   form.append('file', blob, `image.${ext}`)
 
@@ -321,6 +340,7 @@ function mergeOcrResults(
   expandRatio = 1.05,
   maxDistance = 10,
   minGroupSize = 2,
+  confidenceThreshold = 0.7,
 ): OcrApiResult[] {
   if (!items.length) return []
 
@@ -395,7 +415,7 @@ function mergeOcrResults(
   // 每列内按 minY 升序（上→下）
   for (const col of columns) col.sort((a, b) => a.bbox[1] - b.bbox[1])
 
-  return filterOcrNoise(columns.flat())
+  return filterOcrNoise(columns.flat(), confidenceThreshold)
 }
 
 // ── OCR 噪声过滤（合并后执行）────────────────────────────────────────────────
@@ -406,8 +426,9 @@ function mergeOcrResults(
 const CJK_RE    = /[\u3040-\u9FFF\uAC00-\uD7AF]/          // 日文 + 汉字 + 韩文
 const NOISE_RE  = /^(?:\d+|[a-zA-Z]|[^\u3040-\u9FFF\uAC00-\uD7AFa-zA-Z0-9]+)$/
 
-function filterOcrNoise(items: OcrApiResult[]): OcrApiResult[] {
+function filterOcrNoise(items: OcrApiResult[], confidenceThreshold = 0.7): OcrApiResult[] {
   return items.filter(r => {
+    if (r.confidence < confidenceThreshold) return false  // 低置信度 → 过滤
     const t = r.text.trim()
     if (!t) return false
     if (CJK_RE.test(t)) return true   // 含 CJK → 保留
