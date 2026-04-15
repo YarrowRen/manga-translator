@@ -1,30 +1,71 @@
 @import "tailwindcss";
 
+/* ── Theme tokens ── */
+:root {
+  --bg:             #f6f8fa;
+  --surface:        #ffffff;
+  --elevated:       #f6f8fa;
+  --border:         #d0d7de;
+  --border2:        #b8bfc7;
+  --text-1:         #1f2328;
+  --text-2:         #656d76;
+  --text-3:         #adb5bd;
+  --accent:         #0969da;
+  --accent-bg:      rgba(9,105,218,0.08);
+  --accent-border:  rgba(9,105,218,0.3);
+  --accent-light:   #ddeeff;
+  --green:          #1a7f37;
+  --green-bg:       rgba(26,127,55,0.1);
+  --red:            #cf222e;
+  --red-bg:         rgba(207,34,46,0.06);
+  --shadow-sm:      0 1px 0 rgba(27,31,36,0.04);
+  --shadow:         0 1px 3px rgba(27,31,36,0.1), 0 1px 2px rgba(27,31,36,0.06);
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg:             #0d1117;
+  --surface:        #161b22;
+  --elevated:       #21262d;
+  --border:         #30363d;
+  --border2:        #484f58;
+  --text-1:         #e6edf3;
+  --text-2:         #7d8590;
+  --text-3:         #484f58;
+  --accent:         #2f81f7;
+  --accent-bg:      rgba(47,129,247,0.1);
+  --accent-border:  rgba(47,129,247,0.3);
+  --accent-light:   rgba(47,129,247,0.15);
+  --green:          #3fb950;
+  --green-bg:       rgba(63,185,80,0.1);
+  --red:            #f85149;
+  --red-bg:         rgba(248,81,73,0.06);
+  --shadow-sm:      0 0 transparent;
+  --shadow:         0 0 0 1px #30363d;
+  color-scheme: dark;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-html {
-  /* Use dynamic viewport height so mobile browser bars are accounted for */
-  height: 100%;
-}
+html { height: 100%; }
 
 body {
   height: 100%;
-  background-color: #09090f;
-  color: #eeeef8;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI',
-    system-ui, -apple-system, sans-serif;
+  background-color: var(--bg);
+  color: var(--text-1);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Prevent text selection flicker on rapid taps */
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
 
-/* Allow text selection in result cards */
 .selectable { user-select: text; }
 
 #root {
@@ -34,47 +75,42 @@ body {
 }
 
 /* ── Thin scrollbar ── */
-::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #252545; border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: #3a3a60; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border2); }
 
-/* ── Button press haptic feel ── */
+/* ── Button micro-interaction ── */
 button:not(:disabled) {
-  transition: transform 0.08s ease, opacity 0.1s ease, background 0.15s ease,
-    color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.12s, color 0.12s, border-color 0.12s,
+    box-shadow 0.12s, opacity 0.12s, transform 0.08s;
 }
-button:active:not(:disabled) { transform: scale(0.95); }
+button:active:not(:disabled) { transform: scale(0.97); }
 
-/* ── Smooth input focus ── */
+/* ── Input/select focus transition ── */
 input, select, textarea {
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 
 /* ── OCR box overlay transition ── */
 .ocr-box {
-  transition: border-color 0.12s ease, background 0.12s ease,
-    box-shadow 0.12s ease;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
 }
 
-/* ── Fade in animation ── */
+/* ── Animations ── */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .fade-in { animation: fadeIn 0.2s ease forwards; }
 
-/* ── Toast slide up ── */
 @keyframes slideUp {
   from { opacity: 0; transform: translateX(-50%) translateY(12px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 .toast { animation: slideUp 0.22s ease forwards; }
 
-/* ── Spinner ── */
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 .spinner {
   width: 14px; height: 14px;
   border: 2px solid currentColor;
@@ -84,13 +120,12 @@ input, select, textarea {
   flex-shrink: 0;
 }
 
-/* ── Pipeline step pulse ── */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50%       { opacity: 0.4; }
 }
 .pulse { animation: pulse 1.2s ease-in-out infinite; }
 
-/* ── Horizontal scroll hide scrollbar on mobile ── */
+/* ── Horizontal scroll hide ── */
 .scroll-x-hidden { scrollbar-width: none; }
 .scroll-x-hidden::-webkit-scrollbar { display: none; }
