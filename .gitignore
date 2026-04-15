@@ -51,3 +51,5 @@ pnpm-debug.log*
 *.sln
 *.sw?
 Thumbs.db
+design-demos/
+docs/
