@@ -100,7 +100,19 @@ export default defineConfig({
         rewrite: path => path.replace(/^\/exhentai-proxy/, ''),
         ...(proxyAgent ? { agent: proxyAgent } : {}),
       },
-      // PaddleOCR 官方云 API 代理
+      // PaddleOCR 同步接口（境外优化域名，优先使用）
+      '/paddleocr-fast-proxy': {
+        target: 'https://u954f2b0w5nbi33b.aistudio-app.com',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/paddleocr-fast-proxy/, ''),
+        configure: proxy => {
+          proxy.on('proxyReq', proxyReq => {
+            proxyReq.removeHeader('origin')
+            proxyReq.removeHeader('referer')
+          })
+        },
+      },
+      // PaddleOCR 异步 job 接口（fallback）
       '/paddleocr-proxy': {
         target: 'https://paddleocr.aistudio-app.com',
         changeOrigin: true,

@@ -32,8 +32,9 @@ if (upstreamProxy) {
 }
 
 const RULES = [
-  { prefix: '/paddleocr-proxy', target: 'https://paddleocr.aistudio-app.com', stripOrigin: true },
-  { prefix: '/bcebos-proxy',    target: 'https://bj.bcebos.com',              stripOrigin: true },
+  { prefix: '/paddleocr-fast-proxy', target: 'https://u954f2b0w5nbi33b.aistudio-app.com', stripOrigin: true },
+  { prefix: '/paddleocr-proxy',      target: 'https://paddleocr.aistudio-app.com',        stripOrigin: true },
+  { prefix: '/bcebos-proxy',         target: 'https://bj.bcebos.com',                     stripOrigin: true },
   { prefix: '/ehentai-proxy',   target: 'https://e-hentai.org',               injectCookie: true, isEx: false },
   { prefix: '/exhentai-proxy',  target: 'https://exhentai.org',               injectCookie: true, isEx: true  },
 ]

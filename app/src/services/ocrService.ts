@@ -2,12 +2,18 @@
  * OCR 服务 — 直接调用 PaddleOCR 官方云端 API
  *
  * 通过 Vite dev proxy（生产环境需配置 nginx 做同样转发）绕过 CORS
+ *
+ * 接口优先级：
+ *   1. 同步接口（境外优化域名）— 单次请求直接返回结果，无轮询，无 bcebos 下载
+ *   2. 异步接口（fallback）    — 提交 job → 轮询 → 下载 JSONL
  */
 
 import { loadOCRConfig } from './ocrConfig'
 
-// 通过 Vite dev proxy 绕过 CORS
-const CLOUD_JOB_URL = '/paddleocr-proxy/api/v2/ocr/jobs'
+// 异步 job 接口（国内优化）
+const CLOUD_JOB_URL  = '/paddleocr-proxy/api/v2/ocr/jobs'
+// 同步接口（境外优化，直接返回结果）
+const CLOUD_FAST_URL = '/paddleocr-fast-proxy/ocr'
 
 export interface OcrApiResult {
   text: string
@@ -36,16 +42,66 @@ export async function recognizeText(
   return mergeOcrResults(raw, expandRatio, maxDistance, minGroupSize)
 }
 
-// ── PaddleOCR 云端直调 ────────────────────────────────────────────────────────
+// ── 入口分发：优先同步，失败降级异步 ─────────────────────────────────────────
 
 async function recognizeCloud(
   base64: string,
   apiToken: string,
   model: string,
 ): Promise<OcrApiResult[]> {
-  const headers = { Authorization: `bearer ${apiToken}` }
   const t0 = performance.now()
   const ms = (from: number) => `${(performance.now() - from).toFixed(0)}ms`
+
+  try {
+    const result = await recognizeCloudFast(base64, apiToken, model, t0, ms)
+    return result
+  } catch (e: any) {
+    console.warn(`[OCR] 同步接口失败 (${ms(t0)})，降级到异步接口: ${e.message}`)
+    return recognizeCloudAsync(base64, apiToken, model, t0, ms)
+  }
+}
+
+// ── 同步接口 ──────────────────────────────────────────────────────────────────
+
+async function recognizeCloudFast(
+  base64: string,
+  apiToken: string,
+  model: string,
+  t0: number,
+  ms: (from: number) => string,
+): Promise<OcrApiResult[]> {
+  const { blob, ext } = dataUrlToBlob(base64)
+  const form = new FormData()
+  form.append('model', model)
+  form.append('file', blob, `image.${ext}`)
+
+  const t1 = performance.now()
+  const res = await fetch(CLOUD_FAST_URL, {
+    method: 'POST',
+    headers: { Authorization: `bearer ${apiToken}` },
+    body: form,
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`同步 OCR 失败 ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  const data = await res.json()
+  const results = parseOcrObject(data)
+  console.log(`[OCR] 同步接口完成: ${ms(t1)}  总耗时: ${ms(t0)}  识别数: ${results.length}`)
+  return results
+}
+
+// ── 异步接口（原有逻辑）───────────────────────────────────────────────────────
+
+async function recognizeCloudAsync(
+  base64: string,
+  apiToken: string,
+  model: string,
+  t0: number,
+  ms: (from: number) => string,
+): Promise<OcrApiResult[]> {
+  const headers = { Authorization: `bearer ${apiToken}` }
 
   // 1. 将 base64 data URL 转为 Blob，用 FormData 提交
   const { blob, ext } = dataUrlToBlob(base64)
@@ -101,42 +157,47 @@ async function recognizeCloud(
   return parseCloudJsonl(jsonlText)
 }
 
-// ── JSONL 解析（兼容 PaddleX / PP-OCRv3 / PP-OCRv5 输出格式）─────────────────
+// ── 结果解析 ──────────────────────────────────────────────────────────────────
 
+/** 解析单个 JSON 对象（同步接口响应） */
+function parseOcrObject(obj: any): OcrApiResult[] {
+  const results: OcrApiResult[] = []
+  const ocrResults: any[] = obj?.result?.ocrResults ?? []
+  for (const page of ocrResults) {
+    const pruned = page.prunedResult ?? page
+    const texts:  string[]     = pruned.rec_texts  ?? []
+    const scores: number[]     = pruned.rec_scores ?? []
+    const polys:  number[][][] = pruned.rec_polys  ?? pruned.dt_polys ?? []
+
+    for (let i = 0; i < texts.length; i++) {
+      const text = texts[i]?.trim()
+      if (!text) continue
+      const poly = polys[i] ?? []
+      const xs = poly.map((p: number[]) => p[0])
+      const ys = poly.map((p: number[]) => p[1])
+      results.push({
+        text,
+        confidence: scores[i] ?? 0,
+        bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+        polygon: poly.length ? poly : null,
+        is_merged: false,
+        original_count: 1,
+        original_texts: [text],
+      })
+    }
+  }
+  return results
+}
+
+/** 解析 JSONL 文本（异步接口结果，每行一个 JSON 对象） */
 function parseCloudJsonl(jsonlText: string): OcrApiResult[] {
   const results: OcrApiResult[] = []
-
   for (const line of jsonlText.trim().split('\n')) {
     if (!line.trim()) continue
     let obj: any
     try { obj = JSON.parse(line) } catch { continue }
-
-    const ocrResults: any[] = obj?.result?.ocrResults ?? []
-    for (const page of ocrResults) {
-      const pruned = page.prunedResult ?? page
-      const texts:  string[]     = pruned.rec_texts  ?? []
-      const scores: number[]     = pruned.rec_scores ?? []
-      const polys:  number[][][] = pruned.rec_polys  ?? pruned.dt_polys ?? []
-
-      for (let i = 0; i < texts.length; i++) {
-        const text = texts[i]?.trim()
-        if (!text) continue
-        const poly = polys[i] ?? []
-        const xs = poly.map((p: number[]) => p[0])
-        const ys = poly.map((p: number[]) => p[1])
-        results.push({
-          text,
-          confidence: scores[i] ?? 0,
-          bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
-          polygon: poly.length ? poly : null,
-          is_merged: false,
-          original_count: 1,
-          original_texts: [text],
-        })
-      }
-    }
+    results.push(...parseOcrObject(obj))
   }
-
   return results
 }
 
