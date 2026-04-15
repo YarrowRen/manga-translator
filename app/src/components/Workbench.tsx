@@ -16,6 +16,7 @@ import {
   Trash2, Settings, ChevronLeft, ChevronRight, X,
   Zap, ChevronDown, Check, AlertCircle, Info, Link,
 } from 'lucide-react'
+import { useTheme, type ThemeMode } from '../hooks/useTheme'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & types
@@ -112,6 +113,8 @@ export default function Workbench() {
     addImages, clearImages, setCurrentIdx, setOcrResults, setInpaintedUrl, resetPageData,
   } = useWorkbench()
 
+  const { mode: themeMode, setMode: setThemeMode } = useTheme()
+
   const currentImage = images[currentIdx]
   const currentId = imageIds[currentIdx] ?? ''
 
@@ -192,7 +195,6 @@ export default function Workbench() {
     if (!gallery || galleryLoading) return
     const remaining = gallery.totalPages - gallery.loadedCount
     if (remaining <= 0) return
-    // 已导航到倒数第 2 张时触发加载下一批（3页）
     if (currentIdx >= gallery.loadedCount - 2) {
       const from = gallery.loadedCount + 1
       const to = Math.min(from + 2, gallery.totalPages)
@@ -247,6 +249,7 @@ export default function Workbench() {
     setSelectedForDelete(new Set())
     textFitRefs.current = {}
     textFitApplied.current = new Set()
+    // Auto-restore text replace if this page already has translations + inpaint
     const hasData = ocrResults.some(r => r.translation) && !!inpaintedUrl
     setTextReplaceMode(hasData)
   }, [currentIdx]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -258,10 +261,7 @@ export default function Workbench() {
     if (!el) return
 
     const ro = new ResizeObserver(() => {
-      // Immediately re-render to reposition OCR boxes
       setRenderTick(n => n + 1)
-
-      // Debounce text re-fitting (expensive, wait for resize to settle)
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
       resizeTimerRef.current = setTimeout(() => {
         if (!textReplaceMode) return
@@ -403,36 +403,32 @@ export default function Workbench() {
         translation: null,
       }))
       setOcrResults(currentId, results)
-      if (!results.length) { showToast('未检测到文字', 'info'); return }
 
       // Step 2: Translate
       setPipelineStep(1)
-      const translations = await translateBatch(
-        results.map(r => r.text),
-        sourceLanguage,
-        targetLanguage,
-      )
-      const translated = results.map((r, i) => ({
-        ...r, translation: translations[i] ?? null,
-      }))
+      const translations = await translateBatch(results.map(r => r.text), sourceLanguage, targetLanguage)
+      const translated = results.map((r, i) => ({ ...r, translation: translations[i] ?? null }))
       setOcrResults(currentId, translated)
 
       // Step 3: Inpaint
       setPipelineStep(2)
-      const inpaintedDataUrl = await inpaintRegions(
+      setInpainting(true)
+      const resultUrl = await inpaintRegions(
         base64,
         translated.map(r => r.bbox),
         translated.map(r => r.polygon),
       )
-      setInpaintedUrl(currentId, inpaintedDataUrl)
+      setInpaintedUrl(currentId, resultUrl)
+      setInpainting(false)
 
-      // Step 4: Replace
+      // Step 4: Text replace
       setPipelineStep(3)
       textFitApplied.current = new Set()
       setTextReplaceMode(true)
-      showToast('一键翻译完成！', 'success')
+      showToast('一键翻译完成', 'success')
     } catch (e: any) {
-      showToast('流程出错: ' + (e.response?.data?.detail || e.message), 'error')
+      showToast('流程出错: ' + e.message, 'error')
+      setInpainting(false)
     } finally {
       setPipelineRunning(false)
       setPipelineStep(-1)
@@ -443,14 +439,13 @@ export default function Workbench() {
 
   const toggleDeleteMode = () => {
     if (deleteMode) {
-      if (currentId && selectedForDelete.size > 0) {
+      if (selectedForDelete.size > 0) {
         const indices = Array.from(selectedForDelete).sort((a, b) => b - a)
         setOcrResults(currentId, prev => {
           const next = [...prev]
           indices.forEach(i => next.splice(i, 1))
           return next.map((r, i) => ({ ...r, id: i }))
         })
-        // 删除后消除图失效，清除并退出替换模式
         setInpaintedUrl(currentId, '')
         if (textReplaceMode) {
           setTextReplaceMode(false)
@@ -489,7 +484,6 @@ export default function Workbench() {
       return
     }
     if (!hasTranslations) { showToast('请先完成翻译', 'error'); return }
-    // Auto-inpaint if not already done
     if (!inpaintedUrl) {
       const ok = await performInpaint()
       if (!ok) return
@@ -524,8 +518,7 @@ export default function Workbench() {
   }, [textReplaceMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-detect text color from background brightness ────────────────────
-  // Samples each OCR box region from the inpainted/original image using a
-  // canvas, computes luminance, chooses dark (#111) or light (#fff) text.
+
   useEffect(() => {
     if (!textReplaceMode) { setBoxTextColors({}); return }
     const imgSrc = inpaintedUrl || imageUrl
@@ -591,7 +584,7 @@ export default function Workbench() {
   const busy = ocrProcessing || translating || inpainting || pipelineRunning
 
   return (
-    <div className="flex flex-col" style={{ height: '100dvh', background: '#09090f', color: '#eeeef8', overflow: 'hidden' }}>
+    <div className="flex flex-col" style={{ height: '100dvh', background: 'var(--bg)', color: 'var(--text-1)', overflow: 'hidden' }}>
 
       {/* ── Hidden file inputs ── */}
       <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
@@ -599,23 +592,25 @@ export default function Workbench() {
         // @ts-expect-error non-standard
         webkitdirectory="" className="hidden" onChange={handleFolderChange} />
 
-      {/* ── Header ────────────────────────────────────────────────────────── */}
-      <header style={{ background: '#0d0d1c', borderBottom: '1px solid #1a1a30' }}
-        className="flex items-center gap-2 px-4 md:px-6 py-2.5 md:py-3 shrink-0">
-
-        {/* Brand */}
-        <div className="flex items-center gap-2 mr-1">
-          <span className="text-lg leading-none">🌸</span>
-          <span className="font-semibold text-sm md:text-base hidden sm:inline"
-            style={{ color: '#c7c7f0', letterSpacing: '-0.01em' }}>
-            MangaTrans
-          </span>
+      {/* ── Header ── */}
+      <header style={{
+        height: 56, display: 'flex', alignItems: 'center', gap: 8,
+        padding: '0 16px', borderBottom: '1px solid var(--border)',
+        background: 'var(--surface)', flexShrink: 0, boxShadow: 'var(--shadow-sm)',
+      }}>
+        {/* Logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 15, color: 'var(--text-1)', flexShrink: 0 }}>
+          <span style={{ fontSize: 18 }}>🌸</span>
+          <span className="hidden sm:inline">MangaTrans</span>
         </div>
 
+        {/* Divider */}
+        <div className="hidden sm:block" style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px', flexShrink: 0 }} />
+
         {/* Upload buttons */}
-        <HeaderBtn icon={<Upload size={13} />} label="上传图片" shortLabel onClick={() => fileInputRef.current?.click()} />
-        <HeaderBtn icon={<FolderOpen size={13} />} label="上传文件夹" shortLabel onClick={() => folderInputRef.current?.click()} />
-        <HeaderBtn icon={<Link size={13} />} label="输入 URL" shortLabel onClick={() => setShowUrlInput(v => !v)} />
+        <HeaderBtn icon={<Upload size={14} />} label="上传图片" onClick={() => fileInputRef.current?.click()} />
+        <HeaderBtn icon={<FolderOpen size={14} />} label="上传文件夹" onClick={() => folderInputRef.current?.click()} />
+        <HeaderBtn icon={<Link size={14} />} label="URL" onClick={() => setShowUrlInput(v => !v)} />
 
         {/* URL input popup */}
         {showUrlInput && (
@@ -626,116 +621,132 @@ export default function Workbench() {
               onChange={e => setGalleryUrlInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !galleryLoading && handleGalleryLoad()}
               placeholder="https://e-hentai.org/g/..."
-              className="px-3 py-1.5 rounded-lg text-xs outline-none"
-              style={{
-                background: '#111122', border: '1px solid #1a1a35',
-                color: '#c0c0e8', width: '260px',
-              }}
               autoFocus
+              style={{
+                height: 32, padding: '0 10px', borderRadius: 6,
+                border: '1px solid var(--border)', background: 'var(--surface)',
+                color: 'var(--text-1)', fontSize: 13, outline: 'none', width: 240,
+              }}
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}
             />
             <button
               onClick={handleGalleryLoad}
               disabled={galleryLoading || !galleryUrlInput.trim()}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
-              style={{ background: 'rgba(99,102,241,0.2)', color: '#a0a0f8', border: '1px solid rgba(99,102,241,0.3)' }}>
+              style={{ height: 32, padding: '0 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>
               {galleryLoading ? '加载中...' : '加载'}
             </button>
             <button onClick={() => setShowUrlInput(false)}
-              className="w-6 h-6 flex items-center justify-center rounded-lg"
-              style={{ color: '#3a3a60' }}>
-              <X size={12} />
+              style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <X size={13} />
             </button>
           </div>
         )}
 
         {/* Gallery info badge */}
         {gallery && !showUrlInput && (
-          <span className="text-xs px-2 py-1 rounded-lg hidden md:inline truncate max-w-[200px]"
-            style={{ background: 'rgba(99,102,241,0.1)', color: '#7070c0', border: '1px solid rgba(99,102,241,0.15)' }}>
+          <span className="hidden md:inline text-xs px-2 py-1 rounded truncate max-w-[200px]"
+            style={{ background: 'var(--accent-bg)', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}>
             {gallery.title}
           </span>
         )}
 
         {/* Page navigation */}
         {images.length > 0 && (
-          <div className="flex items-center gap-1 ml-1">
+          <div className="flex items-center gap-1" style={{ marginLeft: 4 }}>
             <button
               onClick={() => setCurrentIdx(Math.max(0, currentIdx - 1))}
               disabled={currentIdx === 0}
-              className="w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-25"
-              style={{ color: '#7070a0', background: '#13132a' }}>
+              style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'var(--shadow-sm)' }}
+              onMouseEnter={e => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = 'var(--elevated)'; e.currentTarget.style.color = 'var(--text-1)' } }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.color = 'var(--text-2)' }}>
               <ChevronLeft size={14} />
             </button>
-            <span className="text-xs px-2 tabular-nums" style={{ color: '#6060a0' }}>
-              {currentIdx + 1}<span style={{ color: '#3a3a60' }}>/</span>
+            <span style={{ fontSize: 13, color: 'var(--text-2)', padding: '0 8px', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+              {currentIdx + 1}
+              <span style={{ color: 'var(--text-3)' }}>/</span>
               {gallery ? gallery.totalPages : images.length}
               {gallery && gallery.loadedCount < gallery.totalPages && (
-                <span style={{ color: '#3a3a50' }}> ({gallery.loadedCount}↓)</span>
+                <span style={{ color: 'var(--text-3)', fontSize: 11 }}> ({gallery.loadedCount}↓)</span>
               )}
             </span>
             <button
               onClick={() => setCurrentIdx(Math.min(images.length - 1, currentIdx + 1))}
               disabled={currentIdx === images.length - 1}
-              className="w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-25"
-              style={{ color: '#7070a0', background: '#13132a' }}>
+              style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'var(--shadow-sm)' }}
+              onMouseEnter={e => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = 'var(--elevated)'; e.currentTarget.style.color = 'var(--text-1)' } }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.color = 'var(--text-2)' }}>
               <ChevronRight size={14} />
             </button>
             {currentImage && (
-              <span className="hidden lg:inline text-xs ml-1 truncate max-w-[160px]"
-                style={{ color: '#404060' }}>
+              <span className="hidden lg:inline text-xs ml-1 truncate max-w-[140px]" style={{ color: 'var(--text-3)' }}>
                 {currentImage.name}
               </span>
             )}
             {!hashedAll && images.length > 0 && (
-              <span className="text-xs ml-1 pulse" style={{ color: '#404060' }}>●</span>
+              <span className="text-xs ml-1 pulse" style={{ color: 'var(--text-3)' }}>●</span>
             )}
           </div>
         )}
 
-        <div className="flex-1" />
+        <div style={{ flex: 1 }} />
 
+        {/* Theme toggle */}
+        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', flexShrink: 0 }}>
+          {(['light', 'dark', 'system'] as ThemeMode[]).map(m => (
+            <button key={m} onClick={() => setThemeMode(m)}
+              title={m === 'light' ? '浅色' : m === 'dark' ? '深色' : '跟随系统'}
+              style={{
+                padding: '5px 9px', fontSize: 13, cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+                background: themeMode === m ? 'var(--accent)' : 'var(--surface)',
+                color: themeMode === m ? '#fff' : 'var(--text-2)',
+              }}>
+              {m === 'light' ? '☀' : m === 'dark' ? '☾' : '⊙'}
+            </button>
+          ))}
+        </div>
+
+        {/* Settings */}
         <button onClick={() => navigate('/settings')}
-          className="w-8 h-8 rounded-xl flex items-center justify-center"
-          style={{ color: '#5050a0', background: '#13132a' }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#9898c8'; e.currentTarget.style.background = '#1e1e38' }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#5050a0'; e.currentTarget.style.background = '#13132a' }}>
+          style={{ width: 34, height: 34, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'var(--shadow-sm)', flexShrink: 0 }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--elevated)'; e.currentTarget.style.color = 'var(--text-1)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.color = 'var(--text-2)' }}>
           <Settings size={15} />
         </button>
       </header>
 
       {/* ── Pipeline progress bar ── */}
       {pipelineRunning && pipelineStep >= 0 && (
-        <div style={{ background: '#0d0d1c', borderBottom: '1px solid #1a1a30' }}
-          className="shrink-0 px-4 md:px-6 py-2 fade-in">
-          <div className="flex items-center gap-3">
+        <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', flexShrink: 0, padding: '8px 16px' }}
+          className="fade-in">
+          <div className="flex items-center gap-3 flex-wrap">
             {PIPELINE_LABELS.map((label, i) => (
               <div key={i} className="flex items-center gap-1.5">
                 <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium ${i === pipelineStep ? 'pulse' : ''}`}
                   style={{
-                    background: i < pipelineStep ? 'rgba(34,197,94,0.2)' : i === pipelineStep ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.05)',
-                    color: i < pipelineStep ? '#22c55e' : i === pipelineStep ? '#818cf8' : '#3a3a60',
-                    border: `1px solid ${i < pipelineStep ? 'rgba(34,197,94,0.4)' : i === pipelineStep ? 'rgba(99,102,241,0.5)' : '#1e1e35'}`,
+                    background: i < pipelineStep ? 'var(--green-bg)' : i === pipelineStep ? 'var(--accent-bg)' : 'var(--elevated)',
+                    color: i < pipelineStep ? 'var(--green)' : i === pipelineStep ? 'var(--accent)' : 'var(--text-3)',
+                    border: `1px solid ${i < pipelineStep ? 'rgba(26,127,55,0.3)' : i === pipelineStep ? 'var(--accent-border)' : 'var(--border)'}`,
                   }}>
                   {i < pipelineStep ? <Check size={10} /> : i + 1}
                 </div>
                 <span className="text-xs hidden sm:inline"
-                  style={{ color: i < pipelineStep ? '#22c55e' : i === pipelineStep ? '#818cf8' : '#2a2a50' }}>
+                  style={{ color: i < pipelineStep ? 'var(--green)' : i === pipelineStep ? 'var(--accent)' : 'var(--text-3)' }}>
                   {label}
                 </span>
-                {i < 3 && <div className="w-4 h-px hidden sm:block" style={{ background: i < pipelineStep ? '#22c55e33' : '#1e1e35' }} />}
+                {i < 3 && <div className="w-4 h-px hidden sm:block" style={{ background: 'var(--border)' }} />}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* ── Main content ──────────────────────────────────────────────────── */}
+      {/* ── Main content ── */}
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
 
-        {/* ── Image area (mobile: flex-1 fills screen; desktop: left column) ── */}
+        {/* ── Image area ── */}
         <div className="flex flex-col flex-1 min-h-0">
 
-          {/* Image fills all remaining space */}
           <ImagePanelWrapper
             containerRef={containerRef}
             imgRef={imgRef}
@@ -753,56 +764,55 @@ export default function Workbench() {
             onUploadClick={() => fileInputRef.current?.click()}
           />
 
-          {/* ── Mobile-only: compact action bar below image ── */}
-          <div className="md:hidden shrink-0 px-4 py-2.5"
-            style={{ background: '#0d0d1c', borderTop: '1px solid #1a1a30' }}>
-            <div className="flex items-center gap-1.5 overflow-x-auto scroll-x-hidden">
-              <ActionBtn
-                icon={pipelineRunning ? <span className="spinner" /> : <Zap size={13} />}
-                label={pipelineRunning ? '处理中...' : '一键翻译'}
-                onClick={runFullPipeline} disabled={!imageUrl || !currentId || busy} variant="primary"
+          {/* ── Mobile-only: action bar below image ── */}
+          <div className="md:hidden shrink-0" style={{ background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+            {/* Primary action row */}
+            <div style={{ padding: '12px 12px 6px' }}>
+              <MobileActionBtn
+                icon={pipelineRunning ? <span className="spinner" /> : <Zap size={15} />}
+                label={pipelineRunning ? `${PIPELINE_LABELS[pipelineStep] ?? '处理中'}...` : '一键翻译'}
+                onClick={runFullPipeline} disabled={!imageUrl || !currentId || busy} variant="primary" fullWidth
               />
-              <ActionBtn
-                icon={ocrProcessing ? <span className="spinner" /> : <ScanText size={13} />}
-                label={ocrProcessing ? '识别中...' : '识别'}
+            </div>
+            {/* Secondary actions row */}
+            <div style={{ padding: '0 12px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <MobileActionBtn
+                icon={ocrProcessing ? <span className="spinner" /> : <ScanText size={14} />}
+                label={ocrProcessing ? '识别中' : '识别'}
                 onClick={performOCR} disabled={!imageUrl || !currentId || busy} variant="default"
               />
-              <ActionBtn
-                icon={translating ? <span className="spinner" /> : <Languages size={13} />}
-                label={translating ? '翻译中...' : '翻译'}
+              <MobileActionBtn
+                icon={translating ? <span className="spinner" /> : <Languages size={14} />}
+                label={translating ? '翻译中' : '翻译'}
                 onClick={translateAll} disabled={!ocrResults.length || busy} variant="default"
               />
-              <ActionBtn
-                icon={inpainting ? <span className="spinner" /> : <Type size={13} />}
-                label={inpainting ? '消除中...' : textReplaceMode ? '退出替换' : '替换'}
+              <MobileActionBtn
+                icon={inpainting ? <span className="spinner" /> : <Type size={14} />}
+                label={inpainting ? '消除中' : textReplaceMode ? '退出' : '替换'}
                 onClick={toggleTextReplace} disabled={!hasTranslations || busy}
                 variant={textReplaceMode ? 'active' : 'default'}
               />
-              <ActionBtn
-                icon={<Trash2 size={13} />}
-                label={deleteMode ? (selectedForDelete.size > 0 ? `删除(${selectedForDelete.size})` : '取消') : '删除'}
+              <MobileActionBtn
+                icon={<Trash2 size={14} />}
+                label={deleteMode ? (selectedForDelete.size > 0 ? `删除${selectedForDelete.size}` : '取消') : '删除'}
                 onClick={toggleDeleteMode} disabled={!ocrResults.length}
                 variant={deleteMode ? (selectedForDelete.size > 0 ? 'danger' : 'active') : 'default'}
               />
               {/* Results drawer toggle */}
               <button
                 onClick={() => setMobileDrawerOpen(v => !v)}
-                className="flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs shrink-0 ml-auto"
+                className="flex items-center justify-center gap-1 shrink-0 ml-auto"
                 style={{
-                  background: mobileDrawerOpen ? 'rgba(99,102,241,0.15)' : '#111122',
-                  border: `1px solid ${mobileDrawerOpen ? 'rgba(99,102,241,0.4)' : '#1a1a35'}`,
-                  color: mobileDrawerOpen ? '#818cf8' : '#5050a0',
+                  minWidth: 44, height: 44, borderRadius: 6,
+                  background: mobileDrawerOpen ? 'var(--accent-light)' : 'var(--surface)',
+                  border: `1px solid ${mobileDrawerOpen ? 'var(--accent-border)' : 'var(--border)'}`,
+                  color: mobileDrawerOpen ? 'var(--accent)' : 'var(--text-2)',
+                  cursor: 'pointer',
                 }}>
                 {ocrResults.length > 0 && (
-                  <span className="w-4 h-4 rounded-md flex items-center justify-center text-xs"
-                    style={{ background: '#1a1a35', color: '#6366f1', fontSize: 9 }}>
-                    {ocrResults.length}
-                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'inherit' }}>{ocrResults.length}</span>
                 )}
-                <ChevronDown size={12} style={{
-                  transform: mobileDrawerOpen ? 'rotate(180deg)' : 'none',
-                  transition: 'transform 0.25s',
-                }} />
+                <ChevronDown size={13} style={{ transform: mobileDrawerOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.25s' }} />
               </button>
             </div>
           </div>
@@ -812,33 +822,29 @@ export default function Workbench() {
             style={{
               maxHeight: mobileDrawerOpen ? '48dvh' : 0,
               transition: 'max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              background: '#0d0d1c',
-              borderTop: mobileDrawerOpen ? '1px solid #1a1a30' : 'none',
+              background: 'var(--surface)',
+              borderTop: mobileDrawerOpen ? '1px solid var(--border)' : 'none',
             }}>
             {/* Lang + controls row */}
-            <div className="px-4 pt-3 pb-2.5 flex items-center gap-2 flex-wrap"
-              style={{ borderBottom: '1px solid #141428' }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <LangSelect value={sourceLanguage} onChange={setSourceLanguage} options={[
                 { value: 'japan', label: '日语' }, { value: 'en', label: '英语' },
                 { value: 'ch', label: '中文' }, { value: 'chinese_cht', label: '繁中' },
               ]} />
-              <span style={{ color: '#2a2a50', fontSize: 11 }}>→</span>
+              <span style={{ color: 'var(--text-3)', fontSize: 12 }}>→</span>
               <LangSelect value={targetLanguage} onChange={setTargetLanguage} options={[
                 { value: 'zh', label: '中文' }, { value: 'en', label: '英语' },
                 { value: 'ja', label: '日语' },
               ]} />
-              <div className="ml-auto flex items-center gap-2">
-                <div onClick={() => setShowBoxes(v => !v)}
-                  className="w-8 h-4 rounded-full relative cursor-pointer"
-                  style={{ background: showBoxes ? '#4f4fe8' : '#1e1e38' }}>
-                  <div className="absolute top-0.5 w-3 h-3 rounded-full transition-all"
-                    style={{ background: '#fff', left: showBoxes ? '17px' : '2px' }} />
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div onClick={() => setShowBoxes(v => !v)} style={{ width: 32, height: 16, borderRadius: 8, background: showBoxes ? 'var(--accent)' : 'var(--border)', cursor: 'pointer', position: 'relative', flexShrink: 0 }}>
+                  <div style={{ position: 'absolute', top: 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', transition: 'left 0.15s', left: showBoxes ? 18 : 2 }} />
                 </div>
-                <span className="text-xs" style={{ color: '#4040a0' }}>框</span>
+                <span style={{ fontSize: 12, color: 'var(--text-2)' }}>框</span>
               </div>
             </div>
             {/* Results */}
-            <div className="overflow-y-auto px-4 py-2.5" style={{ maxHeight: 'calc(48dvh - 54px)' }}>
+            <div style={{ overflowY: 'auto', padding: '12px 16px', maxHeight: 'calc(48dvh - 58px)' }}>
               <ResultsList
                 ocrResults={ocrResults} hasImage={!!imageUrl}
                 selectedIdx={selectedIdx} selectedForDelete={selectedForDelete}
@@ -850,74 +856,73 @@ export default function Workbench() {
 
         {/* ── Desktop-only: controls + results side panel ── */}
         <div className="hidden md:flex flex-col min-h-0"
-          style={{ width: 420, background: '#0d0d1c', borderLeft: '1px solid #1a1a30' }}>
+          style={{ width: 420, background: 'var(--surface)', borderLeft: '1px solid var(--border)' }}>
 
           {/* Action bar */}
-          <div className="shrink-0 px-5 pt-5 pb-4" style={{ borderBottom: '1px solid #1a1a30' }}>
-            <div className="flex gap-1.5 flex-wrap">
+          <div style={{ flexShrink: 0, padding: '16px 16px', borderBottom: '1px solid var(--border)' }}>
+            {/* Primary button */}
+            <ActionBtn
+              icon={pipelineRunning ? <span className="spinner" /> : <Zap size={14} />}
+              label={pipelineRunning ? `${PIPELINE_LABELS[pipelineStep] ?? '处理中'}...` : '一键翻译'}
+              onClick={runFullPipeline} disabled={!imageUrl || !currentId || busy} variant="primary" fullWidth
+            />
+            {/* Secondary buttons */}
+            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
               <ActionBtn
-                icon={pipelineRunning ? <span className="spinner" /> : <Zap size={13} />}
-                label={pipelineRunning ? `${PIPELINE_LABELS[pipelineStep] ?? '处理中'}...` : '一键翻译'}
-                onClick={runFullPipeline} disabled={!imageUrl || !currentId || busy} variant="primary"
-              />
-              <ActionBtn
-                icon={ocrProcessing ? <span className="spinner" /> : <ScanText size={13} />}
+                icon={ocrProcessing ? <span className="spinner" /> : <ScanText size={14} />}
                 label={ocrProcessing ? '识别中...' : '识别'}
-                onClick={performOCR} disabled={!imageUrl || !currentId || busy} variant="default"
+                onClick={performOCR} disabled={!imageUrl || !currentId || busy} variant="default" grow
               />
               <ActionBtn
-                icon={translating ? <span className="spinner" /> : <Languages size={13} />}
+                icon={translating ? <span className="spinner" /> : <Languages size={14} />}
                 label={translating ? '翻译中...' : '翻译'}
-                onClick={translateAll} disabled={!ocrResults.length || busy} variant="default"
+                onClick={translateAll} disabled={!ocrResults.length || busy} variant="default" grow
               />
               <ActionBtn
-                icon={inpainting ? <span className="spinner" /> : <Type size={13} />}
+                icon={inpainting ? <span className="spinner" /> : <Type size={14} />}
                 label={inpainting ? '消除中...' : textReplaceMode ? '退出替换' : '替换'}
                 onClick={toggleTextReplace} disabled={!hasTranslations || busy}
-                variant={textReplaceMode ? 'active' : 'default'}
+                variant={textReplaceMode ? 'active' : 'default'} grow
               />
               <ActionBtn
-                icon={<Trash2 size={13} />}
+                icon={<Trash2 size={14} />}
                 label={deleteMode ? (selectedForDelete.size > 0 ? `删除(${selectedForDelete.size})` : '取消') : '删除'}
                 onClick={toggleDeleteMode} disabled={!ocrResults.length}
-                variant={deleteMode ? (selectedForDelete.size > 0 ? 'danger' : 'active') : 'default'}
+                variant={deleteMode ? (selectedForDelete.size > 0 ? 'danger' : 'active') : 'default'} grow
               />
             </div>
 
             {/* Language + toggles */}
-            <div className="flex items-center gap-2 mt-3 flex-wrap">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
               <LangSelect value={sourceLanguage} onChange={setSourceLanguage} options={[
                 { value: 'japan', label: '日语' }, { value: 'en', label: '英语' },
                 { value: 'ch', label: '中文' }, { value: 'chinese_cht', label: '繁中' },
               ]} />
-              <span style={{ color: '#2a2a50', fontSize: 11 }}>→</span>
+              <span style={{ color: 'var(--text-3)', fontSize: 12 }}>→</span>
               <LangSelect value={targetLanguage} onChange={setTargetLanguage} options={[
                 { value: 'zh', label: '中文' }, { value: 'en', label: '英语' },
                 { value: 'ja', label: '日语' },
               ]} />
-              <label className="flex items-center gap-1.5 ml-auto cursor-pointer select-none">
-                <div onClick={() => setShowBoxes(v => !v)}
-                  className="w-8 h-4 rounded-full relative cursor-pointer"
-                  style={{ background: showBoxes ? '#4f4fe8' : '#1e1e38' }}>
-                  <div className="absolute top-0.5 w-3 h-3 rounded-full transition-all"
-                    style={{ background: '#fff', left: showBoxes ? '17px' : '2px' }} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', cursor: 'pointer' }}>
+                <div onClick={() => setShowBoxes(v => !v)} style={{ width: 32, height: 16, borderRadius: 8, background: showBoxes ? 'var(--accent)' : 'var(--border)', cursor: 'pointer', position: 'relative', flexShrink: 0 }}>
+                  <div style={{ position: 'absolute', top: 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', transition: 'left 0.15s', left: showBoxes ? 18 : 2 }} />
                 </div>
-                <span className="text-xs" style={{ color: '#5050a0' }}>框</span>
+                <span style={{ fontSize: 12, color: 'var(--text-2)', userSelect: 'none' }}>框</span>
               </label>
               <button onClick={() => setShowAdvanced(v => !v)}
-                className="flex items-center gap-0.5 text-xs"
-                style={{ color: '#3a3a60' }}
-                onMouseEnter={e => (e.currentTarget.style.color = '#6060a0')}
-                onMouseLeave={e => (e.currentTarget.style.color = '#3a3a60')}>
+                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, padding: '4px 8px', borderRadius: 6, background: 'transparent', border: '1px solid transparent', color: 'var(--text-3)', cursor: 'pointer', fontFamily: 'inherit' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-2)'; e.currentTarget.style.borderColor = 'var(--border)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)'; e.currentTarget.style.borderColor = 'transparent' }}>
                 高级
                 <ChevronDown size={11} style={{ transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
               </button>
             </div>
 
             {showAdvanced && (
-              <div className="mt-2.5 flex flex-col gap-2 fade-in">
-                {/* OCR 参数 */}
-                <div className="grid grid-cols-3 gap-2">
+              <div style={{ marginTop: 12, background: 'var(--elevated)', borderRadius: 6, padding: '12px', border: '1px solid var(--border)' }}
+                className="fade-in">
+                {/* OCR params */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                   {[
                     {
                       label: '检测模式', type: 'select' as const,
@@ -939,55 +944,42 @@ export default function Workbench() {
                     },
                   ].map(f => (
                     <div key={f.label}>
-                      <label className="block text-xs mb-1" style={{ color: '#3a3a60' }}>{f.label}</label>
+                      <label style={{ display: 'block', fontSize: 11, color: 'var(--text-2)', marginBottom: 4 }}>{f.label}</label>
                       {f.type === 'select' ? (
                         <select value={f.value as string} onChange={e => f.onChange(e.target.value)}
-                          className="w-full text-xs px-2 py-1.5 rounded-lg outline-none"
-                          style={{ background: '#13132a', border: '1px solid #1e1e38', color: '#8080c0' }}>
+                          style={{ width: '100%', fontSize: 12, borderRadius: 4, outline: 'none', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-1)', padding: '5px 6px' }}
+                          onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                          onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}>
                           {f.options!.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
                       ) : (
                         <input type="number" value={f.value as number}
                           min={f.min} max={f.max} step={f.step}
                           onChange={e => f.onChange(e.target.value)}
-                          className="w-full text-xs px-2 py-1.5 rounded-lg outline-none"
-                          style={{ background: '#13132a', border: '1px solid #1e1e38', color: '#8080c0' }} />
+                          style={{ width: '100%', fontSize: 12, borderRadius: 4, outline: 'none', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-1)', padding: '5px 6px' }}
+                          onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                          onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
                       )}
                     </div>
                   ))}
                 </div>
 
-                {/* 气泡合并参数 */}
-                <div style={{ borderTop: '1px solid #1a1a30' }} className="pt-2">
-                  <p className="text-xs mb-1.5" style={{ color: '#2a2a50' }}>气泡合并</p>
-                  <div className="grid grid-cols-3 gap-2">
+                {/* Merge params */}
+                <div style={{ borderTop: '1px solid var(--border)', marginTop: 10, paddingTop: 10 }}>
+                  <p style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 8, fontWeight: 500 }}>气泡合并</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                     {[
-                      {
-                        label: '扩展比例',
-                        value: mergeParams.mergeExpandRatio,
-                        min: 1.0, max: 2.0, step: 0.05,
-                        onChange: (v: string) => setMergeParams(p => ({ ...p, mergeExpandRatio: +v })),
-                      },
-                      {
-                        label: '最大距离',
-                        value: mergeParams.mergeMaxDistance,
-                        min: 0, max: 100, step: 1,
-                        onChange: (v: string) => setMergeParams(p => ({ ...p, mergeMaxDistance: +v })),
-                      },
-                      {
-                        label: '最小组大小',
-                        value: mergeParams.mergeMinGroupSize,
-                        min: 2, max: 10, step: 1,
-                        onChange: (v: string) => setMergeParams(p => ({ ...p, mergeMinGroupSize: +v })),
-                      },
+                      { label: '扩展比例', value: mergeParams.mergeExpandRatio, min: 1.0, max: 2.0, step: 0.05, onChange: (v: string) => setMergeParams(p => ({ ...p, mergeExpandRatio: +v })) },
+                      { label: '最大距离', value: mergeParams.mergeMaxDistance, min: 0, max: 100, step: 1, onChange: (v: string) => setMergeParams(p => ({ ...p, mergeMaxDistance: +v })) },
+                      { label: '最小组大小', value: mergeParams.mergeMinGroupSize, min: 2, max: 10, step: 1, onChange: (v: string) => setMergeParams(p => ({ ...p, mergeMinGroupSize: +v })) },
                     ].map(f => (
                       <div key={f.label}>
-                        <label className="block text-xs mb-1" style={{ color: '#3a3a60' }}>{f.label}</label>
-                        <input type="number" value={f.value}
-                          min={f.min} max={f.max} step={f.step}
+                        <label style={{ display: 'block', fontSize: 11, color: 'var(--text-2)', marginBottom: 4 }}>{f.label}</label>
+                        <input type="number" value={f.value} min={f.min} max={f.max} step={f.step}
                           onChange={e => f.onChange(e.target.value)}
-                          className="w-full text-xs px-2 py-1.5 rounded-lg outline-none"
-                          style={{ background: '#13132a', border: '1px solid #1e1e38', color: '#8080c0' }} />
+                          style={{ width: '100%', fontSize: 12, borderRadius: 4, outline: 'none', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-1)', padding: '5px 6px' }}
+                          onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                          onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
                       </div>
                     ))}
                   </div>
@@ -997,7 +989,7 @@ export default function Workbench() {
           </div>
 
           {/* Desktop results list */}
-          <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
             <ResultsList
               ocrResults={ocrResults} hasImage={!!imageUrl}
               selectedIdx={selectedIdx} selectedForDelete={selectedForDelete}
@@ -1012,18 +1004,19 @@ export default function Workbench() {
         style={{ transform: 'translateX(-50%)' }}>
         {toasts.map(toast => (
           <div key={toast.id}
-            className="toast flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm pointer-events-auto whitespace-nowrap"
+            className="toast flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm pointer-events-auto whitespace-nowrap"
             style={{
-              background: toast.type === 'success' ? 'rgba(17,24,20,0.95)' : toast.type === 'error' ? 'rgba(24,14,14,0.95)' : 'rgba(14,14,24,0.95)',
-              border: `1px solid ${toast.type === 'success' ? 'rgba(34,197,94,0.3)' : toast.type === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.3)'}`,
-              color: toast.type === 'success' ? '#4ade80' : toast.type === 'error' ? '#f87171' : '#a5b4fc',
-              backdropFilter: 'blur(12px)',
-              boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+              background: 'var(--surface)',
+              border: `1px solid ${toast.type === 'error' ? 'rgba(207,34,46,0.3)' : toast.type === 'success' ? 'rgba(26,127,55,0.3)' : 'var(--border)'}`,
+              color: toast.type === 'error' ? 'var(--red)' : toast.type === 'success' ? 'var(--green)' : 'var(--text-1)',
+              boxShadow: 'var(--shadow)',
             }}>
             {toast.type === 'success' ? <Check size={13} /> : toast.type === 'error' ? <AlertCircle size={13} /> : <Info size={13} />}
             {toast.msg}
-            <button className="ml-1 opacity-50 hover:opacity-100 pointer-events-auto"
-              onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}>
+            <button style={{ marginLeft: 4, opacity: 0.5, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex' }}
+              onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+              onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+              onMouseLeave={e => (e.currentTarget.style.opacity = '0.5')}>
               <X size={11} />
             </button>
           </div>
@@ -1034,7 +1027,7 @@ export default function Workbench() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ImagePanelWrapper — handles responsive height without inline style conflict
+// ImagePanelWrapper
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ImagePanelProps = {
@@ -1056,7 +1049,6 @@ type ImagePanelProps = {
 
 function ImagePanelWrapper(props: ImagePanelProps) {
   return (
-    // flex-1 min-h-0: fills remaining space in both mobile (flex-col) and desktop (flex-row)
     <div className="flex-1 min-h-0">
       <ImagePanel {...props} />
     </div>
@@ -1072,7 +1064,7 @@ function ImagePanel({
     <div
       ref={containerRef}
       className="w-full h-full relative flex items-center justify-center"
-      style={{ background: '#060610' }}
+      style={{ background: 'var(--elevated)' }}
     >
       {imageUrl ? (
         <>
@@ -1080,7 +1072,7 @@ function ImagePanel({
             ref={imgRef}
             src={textReplaceMode ? (inpaintedUrl || imageUrl) : imageUrl}
             alt="manga page"
-            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
+            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block', boxShadow: 'var(--shadow)' }}
           />
 
           {(showBoxes || textReplaceMode) && ocrResults.length > 0 && (
@@ -1089,17 +1081,17 @@ function ImagePanel({
                 const isSelected = selectedIdx === i
                 const isDelSel = selectedForDelete.has(i)
                 const inReplace = textReplaceMode && result.translation
-                const borderColor = isDelSel ? '#ef4444'
-                  : isSelected ? '#818cf8'
+                const borderColor = isDelSel ? 'var(--red)'
+                  : isSelected ? 'var(--accent)'
                   : inReplace ? 'transparent'
                   : !showBoxes ? 'transparent'
-                  : 'rgba(99,102,241,0.55)'
-                const bg = isDelSel ? 'rgba(239,68,68,0.12)'
-                  : isSelected ? 'rgba(129,140,248,0.08)'
+                  : 'rgba(47,129,247,0.5)'
+                const bg = isDelSel ? 'var(--red-bg)'
+                  : isSelected ? 'var(--accent-bg)'
                   : inReplace ? (inpaintedUrl ? 'transparent' : 'rgba(0,0,0,0.85)')
                   : !showBoxes ? 'transparent'
-                  : 'rgba(99,102,241,0.04)'
-                const shadow = isSelected && !inReplace ? '0 0 0 1px rgba(129,140,248,0.3), 0 0 12px rgba(99,102,241,0.15)' : 'none'
+                  : 'rgba(47,129,247,0.04)'
+                const shadow = isSelected && !inReplace ? '0 0 0 2px var(--accent-border)' : 'none'
 
                 return (
                   <div key={result.id}
@@ -1134,17 +1126,15 @@ function ImagePanel({
       ) : (
         <button
           onClick={onUploadClick}
-          className="flex flex-col items-center gap-3 p-8 rounded-2xl transition-all"
-          style={{ border: '1.5px dashed #1a1a35', color: '#303060' }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = '#4040a0'; e.currentTarget.style.color = '#6060c0' }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = '#1a1a35'; e.currentTarget.style.color = '#303060' }}>
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center"
-            style={{ background: '#0e0e20', border: '1px solid #1a1a35' }}>
-            <Upload size={22} />
+          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: 32, borderRadius: 12, border: '2px dashed var(--border)', background: 'var(--surface)', cursor: 'pointer', transition: 'all 0.2s' }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--accent-bg)' }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--surface)' }}>
+          <div style={{ width: 48, height: 48, borderRadius: 10, background: 'var(--elevated)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>
+            🌸
           </div>
-          <div className="text-center">
-            <p className="text-sm font-medium mb-0.5">上传漫画图片</p>
-            <p className="text-xs" style={{ color: '#252550' }}>支持单张或整个文件夹</p>
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>上传漫画图片</p>
+            <p style={{ fontSize: 12, color: 'var(--text-2)' }}>支持单张或整个文件夹</p>
           </div>
         </button>
       )}
@@ -1153,7 +1143,7 @@ function ImagePanel({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ResultsList — shared between mobile drawer and desktop panel
+// ResultsList
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ResultsList({ ocrResults, hasImage, selectedIdx, selectedForDelete, handleBoxClick }: {
@@ -1166,18 +1156,17 @@ function ResultsList({ ocrResults, hasImage, selectedIdx, selectedForDelete, han
   if (ocrResults.length === 0) return <EmptyState hasImage={hasImage} />
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs font-medium" style={{ color: '#3a3a60' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-2)' }}>
           识别结果
-          <span className="ml-1.5 px-1.5 py-0.5 rounded-md text-xs"
-            style={{ background: '#13132a', color: '#5050a0' }}>
+          <span style={{ marginLeft: 8, padding: '1px 6px', borderRadius: 10, fontSize: 11, background: 'var(--elevated)', border: '1px solid var(--border)', color: 'var(--text-2)' }}>
             {ocrResults.length}
           </span>
         </span>
         {ocrResults.some(r => r.translation) && (
-          <span className="text-xs flex items-center gap-1" style={{ color: '#22c55e' }}>
-            <Check size={10} />已翻译
+          <span style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, color: 'var(--green)' }}>
+            <Check size={11} />已翻译
           </span>
         )}
       </div>
@@ -1186,36 +1175,36 @@ function ResultsList({ ocrResults, hasImage, selectedIdx, selectedForDelete, han
         const isDelSel = selectedForDelete.has(i)
         return (
           <div key={result.id} onClick={() => handleBoxClick(i)}
-            className="ocr-box rounded-xl p-3.5 cursor-pointer selectable"
+            className="ocr-box selectable"
             style={{
-              background: isDelSel ? 'rgba(239,68,68,0.07)' : isSelected ? 'rgba(99,102,241,0.1)' : '#111122',
-              border: `1px solid ${isDelSel ? 'rgba(239,68,68,0.35)' : isSelected ? 'rgba(99,102,241,0.4)' : '#181830'}`,
-              boxShadow: isSelected ? '0 0 0 1px rgba(99,102,241,0.2)' : 'none',
+              borderRadius: 8,
+              padding: '10px 12px',
+              cursor: 'pointer',
+              background: isDelSel ? 'var(--red-bg)' : isSelected ? 'var(--accent-bg)' : 'var(--surface)',
+              border: `1px solid ${isDelSel ? 'rgba(207,34,46,0.25)' : isSelected ? 'var(--accent-border)' : 'var(--border)'}`,
+              boxShadow: isSelected ? '0 0 0 1px var(--accent-border)' : 'var(--shadow-sm)',
             }}>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-xs w-5 h-5 rounded-md flex items-center justify-center font-medium"
-                style={{ background: '#1a1a35', color: '#5050a0', fontSize: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', background: 'var(--elevated)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px', flexShrink: 0 }}>
                 {i + 1}
               </span>
-              <span className="text-xs tabular-nums" style={{ color: '#2a2a50' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' }}>
                 {(result.confidence * 100).toFixed(0)}%
               </span>
               {result.is_merged && (
-                <span className="text-xs px-1.5 py-0.5 rounded-md"
-                  style={{ background: 'rgba(99,102,241,0.12)', color: '#6366f1', fontSize: 10 }}>
+                <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--accent-bg)', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}>
                   合并 ×{result.original_count}
                 </span>
               )}
               {result.translation && (
-                <Check size={10} className="ml-auto" style={{ color: '#22c55e', opacity: 0.7 }} />
+                <Check size={10} style={{ marginLeft: 'auto', flexShrink: 0, color: 'var(--green)', opacity: 0.8 }} />
               )}
             </div>
-            <p className="text-xs leading-relaxed" style={{ color: '#6060a0', wordBreak: 'break-all' }}>
+            <p style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-2)', wordBreak: 'break-all' }}>
               {result.text}
             </p>
             {result.translation && (
-              <p className="text-xs leading-relaxed mt-2 pt-2"
-                style={{ color: '#c0c0e8', wordBreak: 'break-all', borderTop: '1px solid #181830' }}>
+              <p style={{ fontSize: 12, lineHeight: 1.5, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', color: 'var(--accent)', wordBreak: 'break-all' }}>
                 {result.translation}
               </p>
             )}
@@ -1232,12 +1221,11 @@ function ResultsList({ ocrResults, hasImage, selectedIdx, selectedForDelete, han
 
 function EmptyState({ hasImage }: { hasImage: boolean }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-2 py-8">
-      <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-1"
-        style={{ background: '#0e0e20', border: '1px solid #1a1a30' }}>
-        <ScanText size={18} style={{ color: '#252550' }} />
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, padding: '32px 0' }}>
+      <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--elevated)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
+        <ScanText size={18} style={{ color: 'var(--text-3)' }} />
       </div>
-      <p className="text-sm" style={{ color: '#303060' }}>
+      <p style={{ fontSize: 13, color: 'var(--text-2)' }}>
         {hasImage ? '点击「识别」或「一键翻译」开始' : '请先上传图片'}
       </p>
     </div>
@@ -1248,46 +1236,88 @@ function EmptyState({ hasImage }: { hasImage: boolean }) {
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
-function HeaderBtn({ icon, label, shortLabel, onClick }: {
-  icon: React.ReactNode; label: string; shortLabel?: boolean; onClick: () => void
+function HeaderBtn({ icon, label, onClick }: {
+  icon: React.ReactNode; label: string; onClick: () => void
 }) {
   return (
     <button onClick={onClick}
-      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs"
-      style={{ background: '#13132a', color: '#6060a0', border: '1px solid #1a1a35' }}
-      onMouseEnter={e => { e.currentTarget.style.color = '#a0a0d8'; e.currentTarget.style.borderColor = '#2a2a48' }}
-      onMouseLeave={e => { e.currentTarget.style.color = '#6060a0'; e.currentTarget.style.borderColor = '#1a1a35' }}>
+      style={{
+        height: 34, padding: '0 12px', borderRadius: 6,
+        border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)',
+        fontSize: 13, fontFamily: 'inherit', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 6,
+        boxShadow: 'var(--shadow-sm)', fontWeight: 500, whiteSpace: 'nowrap',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'var(--elevated)'; e.currentTarget.style.color = 'var(--text-1)'; e.currentTarget.style.borderColor = 'var(--border2)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.color = 'var(--text-2)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
       {icon}
-      {shortLabel ? (
-        <>
-          <span className="hidden md:inline">{label}</span>
-        </>
-      ) : label}
+      <span className="hidden sm:inline">{label}</span>
     </button>
   )
 }
 
 type ActionVariant = 'default' | 'primary' | 'active' | 'danger'
 
-function ActionBtn({ icon, label, onClick, disabled, variant = 'default' }: {
+function ActionBtn({ icon, label, onClick, disabled, variant = 'default', fullWidth, grow }: {
   icon: React.ReactNode; label: string; onClick: () => void
-  disabled?: boolean; variant?: ActionVariant
+  disabled?: boolean; variant?: ActionVariant; fullWidth?: boolean; grow?: boolean
 }) {
-  const styles: Record<ActionVariant, { bg: string; border: string; color: string; hover?: string }> = {
-    default: { bg: '#111122', border: '#1a1a35', color: '#7070a0', hover: '#a0a0d0' },
-    primary: { bg: 'linear-gradient(135deg, #5254e8 0%, #7c7ef0 100%)', border: 'rgba(99,102,241,0.4)', color: '#fff' },
-    active:  { bg: 'rgba(99,102,241,0.15)', border: 'rgba(99,102,241,0.4)', color: '#818cf8' },
-    danger:  { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.35)', color: '#f87171' },
-  }
-  const s = styles[variant]
+  const isPrimary = variant === 'primary'
+  const isActive = variant === 'active'
+  const isDanger = variant === 'danger'
+
+  const bg = isPrimary ? 'var(--accent)' : isActive ? 'var(--accent-light)' : isDanger ? 'var(--red-bg)' : 'var(--surface)'
+  const border = isPrimary ? 'rgba(0,0,0,0.1)' : isActive ? 'var(--accent-border)' : isDanger ? 'rgba(207,34,46,0.25)' : 'var(--border)'
+  const color = isPrimary ? '#fff' : isActive ? 'var(--accent)' : isDanger ? 'var(--red)' : 'var(--text-2)'
 
   return (
     <button onClick={onClick} disabled={disabled}
-      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap shrink-0 disabled:opacity-30"
-      style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color }}
-      onMouseEnter={e => { if (!disabled && s.hover) e.currentTarget.style.color = s.hover }}
-      onMouseLeave={e => { e.currentTarget.style.color = s.color }}>
+      style={{
+        background: bg, border: `1px solid ${border}`, color,
+        height: isPrimary ? 42 : 34, padding: '0 12px',
+        borderRadius: 6, fontSize: isPrimary ? 14 : 12, fontWeight: isPrimary ? 600 : 500,
+        fontFamily: 'inherit', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+        boxShadow: 'var(--shadow-sm)', whiteSpace: 'nowrap',
+        width: fullWidth ? '100%' : undefined,
+        flex: grow ? 1 : undefined,
+        opacity: disabled ? 0.4 : 1,
+      }}
+      onMouseEnter={e => { if (!disabled && !isPrimary && !isActive && !isDanger) { e.currentTarget.style.background = 'var(--elevated)'; e.currentTarget.style.color = 'var(--text-1)'; e.currentTarget.style.borderColor = 'var(--border2)' } else if (!disabled && isPrimary) { e.currentTarget.style.opacity = '0.88' } }}
+      onMouseLeave={e => { e.currentTarget.style.background = bg; e.currentTarget.style.color = color; e.currentTarget.style.borderColor = border; e.currentTarget.style.opacity = disabled ? '0.4' : '1' }}>
       {icon}{label}
+    </button>
+  )
+}
+
+function MobileActionBtn({ icon, label, onClick, disabled, variant = 'default', fullWidth }: {
+  icon: React.ReactNode; label: string; onClick: () => void
+  disabled?: boolean; variant?: ActionVariant; fullWidth?: boolean
+}) {
+  const isPrimary = variant === 'primary'
+  const isActive = variant === 'active'
+  const isDanger = variant === 'danger'
+
+  const bg = isPrimary ? 'var(--accent)' : isActive ? 'var(--accent-light)' : isDanger ? 'var(--red-bg)' : 'var(--surface)'
+  const border = isPrimary ? 'rgba(0,0,0,0.1)' : isActive ? 'var(--accent-border)' : isDanger ? 'rgba(207,34,46,0.25)' : 'var(--border)'
+  const color = isPrimary ? '#fff' : isActive ? 'var(--accent)' : isDanger ? 'var(--red)' : 'var(--text-2)'
+
+  return (
+    <button onClick={onClick} disabled={disabled}
+      style={{
+        background: bg, border: `1px solid ${border}`, color,
+        height: isPrimary ? 46 : 44,
+        padding: isPrimary ? '0 16px' : '0 10px',
+        borderRadius: 6, fontSize: isPrimary ? 14 : 12, fontWeight: isPrimary ? 600 : 500,
+        fontFamily: 'inherit', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        width: fullWidth ? '100%' : undefined,
+        flex: fullWidth ? undefined : 1,
+        opacity: disabled ? 0.4 : 1,
+        whiteSpace: 'nowrap',
+      }}>
+      {icon}
+      <span>{label}</span>
     </button>
   )
 }
@@ -1298,8 +1328,14 @@ function LangSelect({ value, onChange, options }: {
 }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)}
-      className="text-xs px-2 py-1.5 rounded-lg outline-none"
-      style={{ background: '#111122', border: '1px solid #1a1a35', color: '#6060a0' }}>
+      style={{
+        height: 34, padding: '0 8px', borderRadius: 6, outline: 'none',
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        color: 'var(--text-1)', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer',
+        boxShadow: 'var(--shadow-sm)',
+      }}
+      onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+      onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}>
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
