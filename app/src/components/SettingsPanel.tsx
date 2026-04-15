@@ -5,9 +5,11 @@ import { loadLLMConfig, saveLLMConfig, type LLMConfig } from '../services/llmCon
 import { loadOCRConfig, saveOCRConfig, type OCRConfig } from '../services/ocrConfig'
 import { loadEhentaiConfig, saveEhentaiConfig, type EhentaiConfig } from '../services/ehentaiConfig'
 import { testLLMConnection } from '../services/translationService'
+import { useTheme, type ThemeMode } from '../hooks/useTheme'
 
 export default function SettingsPanel() {
   const navigate = useNavigate()
+  const { mode: themeMode, setMode: setThemeMode } = useTheme()
 
   // LLM 配置
   const [config, setConfig] = useState<LLMConfig>(loadLLMConfig)
@@ -30,48 +32,28 @@ export default function SettingsPanel() {
   const [ehSaveStatus, setEhSaveStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   const handleEhSave = () => {
-    setEhSaving(true)
-    setEhSaveStatus(null)
-    try {
-      saveEhentaiConfig(ehConfig)
-      setEhSaveStatus({ type: 'success', msg: 'ExHentai 配置已保存' })
-    } catch {
-      setEhSaveStatus({ type: 'error', msg: '保存失败' })
-    } finally {
-      setEhSaving(false)
-    }
+    setEhSaving(true); setEhSaveStatus(null)
+    try { saveEhentaiConfig(ehConfig); setEhSaveStatus({ type: 'success', msg: 'ExHentai 配置已保存' }) }
+    catch { setEhSaveStatus({ type: 'error', msg: '保存失败' }) }
+    finally { setEhSaving(false) }
   }
 
   const handleOCRSave = () => {
-    setOcrSaving(true)
-    setOcrSaveStatus(null)
-    try {
-      saveOCRConfig(ocrConfig)
-      setOcrSaveStatus({ type: 'success', msg: 'OCR 配置已保存' })
-    } catch {
-      setOcrSaveStatus({ type: 'error', msg: '保存失败' })
-    } finally {
-      setOcrSaving(false)
-    }
+    setOcrSaving(true); setOcrSaveStatus(null)
+    try { saveOCRConfig(ocrConfig); setOcrSaveStatus({ type: 'success', msg: 'OCR 配置已保存' }) }
+    catch { setOcrSaveStatus({ type: 'error', msg: '保存失败' }) }
+    finally { setOcrSaving(false) }
   }
 
   const handleSave = () => {
-    setSaving(true)
-    setSaveStatus(null)
-    try {
-      saveLLMConfig(config)
-      setSaveStatus({ type: 'success', msg: '配置已保存' })
-    } catch {
-      setSaveStatus({ type: 'error', msg: '保存失败' })
-    } finally {
-      setSaving(false)
-    }
+    setSaving(true); setSaveStatus(null)
+    try { saveLLMConfig(config); setSaveStatus({ type: 'success', msg: '配置已保存' }) }
+    catch { setSaveStatus({ type: 'error', msg: '保存失败' }) }
+    finally { setSaving(false) }
   }
 
   const handleTest = async () => {
-    setTesting(true)
-    setTestStatus(null)
-    // Save first so testLLMConnection reads the latest config
+    setTesting(true); setTestStatus(null)
     saveLLMConfig(config)
     try {
       const { model } = await testLLMConnection()
@@ -83,275 +65,179 @@ export default function SettingsPanel() {
     }
   }
 
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 12px', borderRadius: 6,
+    border: '1px solid var(--border)', background: 'var(--elevated)',
+    color: 'var(--text-1)', fontSize: 13, fontFamily: 'inherit', outline: 'none',
+  }
+
   return (
-    <div style={{ minHeight: '100dvh', background: '#09090f', color: '#eeeef8' }}>
+    <div style={{ minHeight: '100dvh', background: 'var(--bg)', color: 'var(--text-1)' }}>
 
       {/* Header */}
-      <header style={{ background: '#0d0d1c', borderBottom: '1px solid #1a1a30' }}
-        className="flex items-center gap-3 px-4 md:px-6 py-3 md:py-3.5">
+      <header style={{
+        height: 56, display: 'flex', alignItems: 'center', gap: 8,
+        padding: '0 24px', borderBottom: '1px solid var(--border)',
+        background: 'var(--surface)', flexShrink: 0, boxShadow: 'var(--shadow-sm)',
+      }}>
         <button onClick={() => navigate('/')}
-          className="w-8 h-8 rounded-xl flex items-center justify-center"
-          style={{ background: '#13132a', color: '#6060a0', border: '1px solid #1a1a35' }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#a0a0d8' }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6060a0' }}>
+          style={{ width: 34, height: 34, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'var(--shadow-sm)', flexShrink: 0 }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--elevated)'; e.currentTarget.style.color = 'var(--text-1)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.color = 'var(--text-2)' }}>
           <ArrowLeft size={15} />
         </button>
 
-        <div className="flex items-center gap-2">
-          <span className="text-lg leading-none">🌸</span>
-          <span className="font-semibold text-sm" style={{ color: '#c7c7f0', letterSpacing: '-0.01em' }}>
-            MangaTrans
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 15, color: 'var(--text-1)' }}>
+          <span style={{ fontSize: 18 }}>🌸</span>
+          MangaTrans
         </div>
+        <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
+        <span style={{ fontSize: 13, color: 'var(--text-2)' }}>设置</span>
 
-        <span className="text-sm" style={{ color: '#3a3a60' }}>/</span>
-        <span className="text-sm" style={{ color: '#7070a0' }}>LLM 配置</span>
+        <div style={{ flex: 1 }} />
+
+        {/* Theme toggle */}
+        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+          {(['light', 'dark', 'system'] as ThemeMode[]).map(m => (
+            <button key={m} onClick={() => setThemeMode(m)}
+              title={m === 'light' ? '浅色' : m === 'dark' ? '深色' : '跟随系统'}
+              style={{
+                padding: '5px 9px', fontSize: 13, cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+                background: themeMode === m ? 'var(--accent)' : 'var(--surface)',
+                color: themeMode === m ? '#fff' : 'var(--text-2)',
+              }}>
+              {m === 'light' ? '☀' : m === 'dark' ? '☾' : '⊙'}
+            </button>
+          ))}
+        </div>
       </header>
 
       {/* Content */}
-      <div className="max-w-lg mx-auto px-4 md:px-6 py-8 md:py-12">
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: '32px 16px' }}>
 
-        {/* Card */}
-        <div className="rounded-2xl overflow-hidden"
-          style={{ background: '#0d0d1c', border: '1px solid #1a1a30' }}>
-
-          {/* Card header */}
-          <div className="px-6 py-5" style={{ borderBottom: '1px solid #141428' }}>
-            <h2 className="text-base font-semibold mb-1" style={{ color: '#d0d0f0' }}>
-              API 连接配置
-            </h2>
-            <p className="text-xs leading-relaxed" style={{ color: '#3a3a60' }}>
-              配置 OpenAI 兼容的 LLM 接口，支持 OpenAI、DeepSeek、通义千问等服务。
-              配置保存在浏览器本地，不会上传到服务器。
-            </p>
-          </div>
-
-          {/* Form */}
-          <div className="px-6 py-5 flex flex-col gap-4">
-
-            <FormField label="API Base URL">
-              <input
-                type="text"
-                value={config.base_url}
-                onChange={e => setConfig({ ...config, base_url: e.target.value })}
-                placeholder="https://api.openai.com/v1"
-                className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
-                style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
-                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
-                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
-              />
-            </FormField>
-
-            <FormField label="API Key">
-              <div className="relative">
-                <input
-                  type={showKey ? 'text' : 'password'}
-                  value={config.api_key}
-                  onChange={e => setConfig({ ...config, api_key: e.target.value })}
-                  placeholder="sk-..."
-                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl text-sm outline-none"
-                  style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
-                  onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
-                  onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
-                />
-                <button onClick={() => setShowKey(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center"
-                  style={{ color: '#3a3a60' }}
-                  onMouseEnter={e => (e.currentTarget.style.color = '#6060a0')}
-                  onMouseLeave={e => (e.currentTarget.style.color = '#3a3a60')}>
-                  {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-            </FormField>
-
-            <FormField label="模型">
-              <input
-                type="text"
-                value={config.model}
-                onChange={e => setConfig({ ...config, model: e.target.value })}
-                placeholder="gpt-4o-mini"
-                className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
-                style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
-                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
-                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
-              />
-            </FormField>
-          </div>
-
-          {/* Actions */}
-          <div className="px-6 pt-1 pb-6 flex flex-col gap-3">
-            <div className="flex gap-2.5">
-              <button onClick={handleSave} disabled={saving}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium flex-1 justify-center disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg, #5254e8 0%, #7c7ef0 100%)', color: '#fff' }}>
-                {saving ? <span className="spinner" /> : <Save size={14} />}
-                {saving ? '保存中...' : '保存配置'}
-              </button>
-
-              <button onClick={handleTest} disabled={testing}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium disabled:opacity-50"
-                style={{ background: '#111122', border: '1px solid #1a1a35', color: '#6060a0' }}
-                onMouseEnter={e => { if (!testing) e.currentTarget.style.color = '#a0a0d8' }}
-                onMouseLeave={e => { e.currentTarget.style.color = '#6060a0' }}>
-                {testing ? <span className="spinner" /> : <Wifi size={14} />}
-                {testing ? '测试中...' : '测试连接'}
+        {/* LLM Card */}
+        <SettingsCard
+          title="API 连接配置"
+          description="配置 OpenAI 兼容的 LLM 接口，支持 OpenAI、DeepSeek、通义千问等。配置保存在浏览器本地。">
+          <FormField label="API Base URL">
+            <input type="text" value={config.base_url}
+              onChange={e => setConfig({ ...config, base_url: e.target.value })}
+              placeholder="https://api.openai.com/v1" style={inputStyle}
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
+          </FormField>
+          <FormField label="API Key">
+            <div style={{ position: 'relative' }}>
+              <input type={showKey ? 'text' : 'password'} value={config.api_key}
+                onChange={e => setConfig({ ...config, api_key: e.target.value })}
+                placeholder="sk-..." style={{ ...inputStyle, paddingRight: 36 }}
+                onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
+              <button onClick={() => setShowKey(v => !v)}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer', display: 'flex', padding: 0 }}>
+                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
-
-            {saveStatus && (
-              <StatusBadge type={saveStatus.type} msg={saveStatus.msg} onClose={() => setSaveStatus(null)} />
-            )}
-            {testStatus && (
-              <StatusBadge type={testStatus.type} msg={testStatus.msg} onClose={() => setTestStatus(null)} />
-            )}
-          </div>
-        </div>
-
-        {/* OCR 配置卡片 */}
-        <div className="rounded-2xl overflow-hidden mt-6"
-          style={{ background: '#0d0d1c', border: '1px solid #1a1a30' }}>
-
-          <div className="px-6 py-5" style={{ borderBottom: '1px solid #141428' }}>
-            <h2 className="text-base font-semibold mb-1" style={{ color: '#d0d0f0' }}>
-              OCR 配置
-            </h2>
-            <p className="text-xs leading-relaxed" style={{ color: '#3a3a60' }}>
-              调用 PaddleOCR 官方云端 API，需要 AI Studio API Token。
-              从 <span style={{ color: '#6060a0' }}>aistudio.baidu.com</span> 获取。
-            </p>
-          </div>
-
-          <div className="px-6 py-5 flex flex-col gap-4">
-
-            <FormField label="API Token">
-              <div className="relative">
-                <input
-                  type={showToken ? 'text' : 'password'}
-                  value={ocrConfig.api_token}
-                  onChange={e => setOcrConfig(c => ({ ...c, api_token: e.target.value }))}
-                  placeholder="ae6e707c..."
-                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl text-sm outline-none"
-                  style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
-                  onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
-                  onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
-                />
-                <button onClick={() => setShowToken(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center"
-                  style={{ color: '#3a3a60' }}
-                  onMouseEnter={e => (e.currentTarget.style.color = '#6060a0')}
-                  onMouseLeave={e => (e.currentTarget.style.color = '#3a3a60')}>
-                  {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-            </FormField>
-
-            <FormField label="模型">
-              <input
-                type="text"
-                value={ocrConfig.model}
-                onChange={e => setOcrConfig(c => ({ ...c, model: e.target.value }))}
-                placeholder="PP-OCRv5"
-                className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none"
-                style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
-                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
-                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
-              />
-            </FormField>
-          </div>
-
-          <div className="px-6 pt-1 pb-6 flex flex-col gap-3">
-            <button onClick={handleOCRSave} disabled={ocrSaving}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium justify-center disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg, #5254e8 0%, #7c7ef0 100%)', color: '#fff' }}>
-              {ocrSaving ? <span className="spinner" /> : <Save size={14} />}
-              {ocrSaving ? '保存中...' : '保存 OCR 配置'}
+          </FormField>
+          <FormField label="模型">
+            <input type="text" value={config.model}
+              onChange={e => setConfig({ ...config, model: e.target.value })}
+              placeholder="gpt-4o-mini" style={inputStyle}
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
+          </FormField>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={handleSave} disabled={saving}
+              style={{ flex: 1, height: 40, borderRadius: 6, background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontFamily: 'inherit', opacity: saving ? 0.6 : 1 }}>
+              {saving ? <span className="spinner" /> : <Save size={14} />}
+              {saving ? '保存中...' : '保存配置'}
             </button>
-            {ocrSaveStatus && (
-              <StatusBadge type={ocrSaveStatus.type} msg={ocrSaveStatus.msg} onClose={() => setOcrSaveStatus(null)} />
-            )}
-          </div>
-        </div>
-
-        {/* ExHentai 配置卡片 */}
-        <div className="rounded-2xl overflow-hidden mt-6"
-          style={{ background: '#0d0d1c', border: '1px solid #1a1a30' }}>
-
-          <div className="px-6 py-5" style={{ borderBottom: '1px solid #141428' }}>
-            <h2 className="text-base font-semibold mb-1" style={{ color: '#d0d0f0' }}>
-              E-hentai / ExHentai 配置
-            </h2>
-            <p className="text-xs leading-relaxed" style={{ color: '#3a3a60' }}>
-              用于通过 URL 加载画廊。优先使用 e-hentai，失败时自动切换 exhentai。
-              从浏览器登录后的 Cookie 中获取以下字段。
-            </p>
-          </div>
-
-          <div className="px-6 py-5 flex flex-col gap-4">
-
-            <FormField label="member_id">
-              <input
-                type="text"
-                value={ehConfig.member_id}
-                onChange={e => setEhConfig(c => ({ ...c, member_id: e.target.value }))}
-                placeholder="123456"
-                className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none font-mono"
-                style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
-                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
-                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
-              />
-            </FormField>
-
-            <FormField label="pass_hash">
-              <div className="relative">
-                <input
-                  type={showPassHash ? 'text' : 'password'}
-                  value={ehConfig.pass_hash}
-                  onChange={e => setEhConfig(c => ({ ...c, pass_hash: e.target.value }))}
-                  placeholder="a1b2c3d4e5..."
-                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl text-sm outline-none font-mono"
-                  style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
-                  onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
-                  onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
-                />
-                <button onClick={() => setShowPassHash(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center"
-                  style={{ color: '#3a3a60' }}
-                  onMouseEnter={e => (e.currentTarget.style.color = '#6060a0')}
-                  onMouseLeave={e => (e.currentTarget.style.color = '#3a3a60')}>
-                  {showPassHash ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-            </FormField>
-
-            <FormField label="igneous（ExHentai 专用，可选）">
-              <input
-                type="text"
-                value={ehConfig.igneous}
-                onChange={e => setEhConfig(c => ({ ...c, igneous: e.target.value }))}
-                placeholder="留空则仅访问 e-hentai"
-                className="w-full px-3.5 py-2.5 rounded-xl text-sm outline-none font-mono"
-                style={{ background: '#111122', border: '1px solid #1a1a35', color: '#c0c0e8' }}
-                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)')}
-                onBlur={e => (e.currentTarget.style.borderColor = '#1a1a35')}
-              />
-            </FormField>
-          </div>
-
-          <div className="px-6 pt-1 pb-6 flex flex-col gap-3">
-            <button onClick={handleEhSave} disabled={ehSaving}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium justify-center disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg, #5254e8 0%, #7c7ef0 100%)', color: '#fff' }}>
-              {ehSaving ? <span className="spinner" /> : <Save size={14} />}
-              {ehSaving ? '保存中...' : '保存配置'}
+            <button onClick={handleTest} disabled={testing}
+              style={{ height: 40, padding: '0 16px', borderRadius: 6, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-2)', fontSize: 13, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', boxShadow: 'var(--shadow-sm)', opacity: testing ? 0.6 : 1 }}
+              onMouseEnter={e => { if (!testing) { e.currentTarget.style.background = 'var(--elevated)'; e.currentTarget.style.color = 'var(--text-1)' } }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.color = 'var(--text-2)' }}>
+              {testing ? <span className="spinner" /> : <Wifi size={14} />}
+              {testing ? '测试中...' : '测试连接'}
             </button>
-            {ehSaveStatus && (
-              <StatusBadge type={ehSaveStatus.type} msg={ehSaveStatus.msg} onClose={() => setEhSaveStatus(null)} />
-            )}
           </div>
-        </div>
+          {saveStatus && <StatusBadge type={saveStatus.type} msg={saveStatus.msg} onClose={() => setSaveStatus(null)} />}
+          {testStatus && <StatusBadge type={testStatus.type} msg={testStatus.msg} onClose={() => setTestStatus(null)} />}
+        </SettingsCard>
 
-        {/* Hint */}
-        <p className="text-center text-xs mt-6" style={{ color: '#252540' }}>
+        {/* OCR Card */}
+        <SettingsCard
+          title="OCR 配置"
+          description="调用 PaddleOCR 官方云端 API，需要 AI Studio API Token。从 aistudio.baidu.com 获取。"
+          style={{ marginTop: 16 }}>
+          <FormField label="API Token">
+            <div style={{ position: 'relative' }}>
+              <input type={showToken ? 'text' : 'password'} value={ocrConfig.api_token}
+                onChange={e => setOcrConfig(c => ({ ...c, api_token: e.target.value }))}
+                placeholder="ae6e707c..." style={{ ...inputStyle, paddingRight: 36 }}
+                onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
+              <button onClick={() => setShowToken(v => !v)}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer', display: 'flex', padding: 0 }}>
+                {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </FormField>
+          <FormField label="模型">
+            <input type="text" value={ocrConfig.model}
+              onChange={e => setOcrConfig(c => ({ ...c, model: e.target.value }))}
+              placeholder="PP-OCRv5" style={inputStyle}
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
+          </FormField>
+          <button onClick={handleOCRSave} disabled={ocrSaving}
+            style={{ width: '100%', height: 40, borderRadius: 6, background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontFamily: 'inherit', opacity: ocrSaving ? 0.6 : 1 }}>
+            {ocrSaving ? <span className="spinner" /> : <Save size={14} />}
+            {ocrSaving ? '保存中...' : '保存 OCR 配置'}
+          </button>
+          {ocrSaveStatus && <StatusBadge type={ocrSaveStatus.type} msg={ocrSaveStatus.msg} onClose={() => setOcrSaveStatus(null)} />}
+        </SettingsCard>
+
+        {/* ExHentai Card */}
+        <SettingsCard
+          title="E-hentai / ExHentai 配置"
+          description="用于通过 URL 加载画廊。从浏览器登录后的 Cookie 中获取以下字段。"
+          style={{ marginTop: 16 }}>
+          <FormField label="member_id">
+            <input type="text" value={ehConfig.member_id}
+              onChange={e => setEhConfig(c => ({ ...c, member_id: e.target.value }))}
+              placeholder="123456" style={{ ...inputStyle, fontFamily: 'monospace' }}
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
+          </FormField>
+          <FormField label="pass_hash">
+            <div style={{ position: 'relative' }}>
+              <input type={showPassHash ? 'text' : 'password'} value={ehConfig.pass_hash}
+                onChange={e => setEhConfig(c => ({ ...c, pass_hash: e.target.value }))}
+                placeholder="a1b2c3d4e5..." style={{ ...inputStyle, paddingRight: 36, fontFamily: 'monospace' }}
+                onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
+              <button onClick={() => setShowPassHash(v => !v)}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer', display: 'flex', padding: 0 }}>
+                {showPassHash ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </FormField>
+          <FormField label="igneous（ExHentai 专用，可选）">
+            <input type="text" value={ehConfig.igneous}
+              onChange={e => setEhConfig(c => ({ ...c, igneous: e.target.value }))}
+              placeholder="留空则仅访问 e-hentai" style={{ ...inputStyle, fontFamily: 'monospace' }}
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
+          </FormField>
+          <button onClick={handleEhSave} disabled={ehSaving}
+            style={{ width: '100%', height: 40, borderRadius: 6, background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontFamily: 'inherit', opacity: ehSaving ? 0.6 : 1 }}>
+            {ehSaving ? <span className="spinner" /> : <Save size={14} />}
+            {ehSaving ? '保存中...' : '保存配置'}
+          </button>
+          {ehSaveStatus && <StatusBadge type={ehSaveStatus.type} msg={ehSaveStatus.msg} onClose={() => setEhSaveStatus(null)} />}
+        </SettingsCard>
+
+        <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-3)', marginTop: 24 }}>
           配置仅保存在浏览器 localStorage，不会上传到任何服务器
         </p>
       </div>
@@ -361,10 +247,28 @@ export default function SettingsPanel() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
+function SettingsCard({ title, description, children, style }: {
+  title: string; description: string; children: React.ReactNode; style?: React.CSSProperties
+}) {
+  return (
+    <div style={{ borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', overflow: 'hidden', boxShadow: 'var(--shadow-sm)', ...style }}>
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+        <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>{title}</h2>
+        <p style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6 }}>{description}</p>
+      </div>
+      <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function FormField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-medium mb-1.5" style={{ color: '#404070' }}>{label}</label>
+      <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: 'var(--text-2)', marginBottom: 6 }}>
+        {label}
+      </label>
       {children}
     </div>
   )
@@ -372,17 +276,18 @@ function FormField({ label, children }: { label: string; children: React.ReactNo
 
 function StatusBadge({ type, msg, onClose }: { type: 'success' | 'error'; msg: string; onClose: () => void }) {
   return (
-    <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm fade-in"
-      style={{
-        background: type === 'success' ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-        border: `1px solid ${type === 'success' ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
-        color: type === 'success' ? '#4ade80' : '#f87171',
-      }}>
+    <div className="fade-in" style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 6, fontSize: 12,
+      background: type === 'success' ? 'var(--green-bg)' : 'var(--red-bg)',
+      border: `1px solid ${type === 'success' ? 'rgba(26,127,55,0.3)' : 'rgba(207,34,46,0.25)'}`,
+      color: type === 'success' ? 'var(--green)' : 'var(--red)',
+    }}>
       {type === 'success' ? <Check size={13} /> : <AlertCircle size={13} />}
-      <span className="flex-1 text-xs">{msg}</span>
-      <button onClick={onClose} style={{ opacity: 0.5 }}
+      <span style={{ flex: 1 }}>{msg}</span>
+      <button onClick={onClose}
+        style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', opacity: 0.6, fontSize: 16, lineHeight: 1, padding: 0 }}
         onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
-        onMouseLeave={e => (e.currentTarget.style.opacity = '0.5')}>
+        onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}>
         ×
       </button>
     </div>
