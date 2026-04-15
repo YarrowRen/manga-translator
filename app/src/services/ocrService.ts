@@ -45,9 +45,6 @@ export async function recognizeText(
 // localhost / 127.0.0.1 判定为本地开发环境，直接走异步接口
 const IS_LOCAL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
 
-// 发送给 OCR 的图片最长边限制（压缩后上传，坐标结果还原到原图空间）
-const OCR_MAX_SIDE = 2048
-
 // ── 入口分发：本地走异步，远端优先同步（失败降级异步）────────────────────────
 
 async function recognizeCloud(
@@ -58,7 +55,10 @@ async function recognizeCloud(
   const t0 = performance.now()
   const ms = (from: number) => `${(performance.now() - from).toFixed(0)}ms`
 
-  const { compressed, scale } = await compressForOcr(base64, OCR_MAX_SIDE)
+  const cfg = loadOCRConfig()
+  const { compressed, scale } = cfg.compress_enabled
+    ? await compressForOcr(base64, cfg.compress_max_side, cfg.compress_quality)
+    : { compressed: base64, scale: 1 }
 
   let raw: OcrApiResult[]
   if (IS_LOCAL) {
@@ -81,12 +81,15 @@ async function recognizeCloud(
 async function compressForOcr(
   base64: string,
   maxSide: number,
+  quality: number,
 ): Promise<{ compressed: string; scale: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => {
-      const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight))
-      if (scale >= 1) { resolve({ compressed: base64, scale: 1 }); return }
+      const scale = maxSide > 0
+        ? Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight))
+        : 1
+      if (scale >= 1 && quality >= 1) { resolve({ compressed: base64, scale: 1 }); return }
 
       const w = Math.round(img.naturalWidth * scale)
       const h = Math.round(img.naturalHeight * scale)
@@ -94,8 +97,8 @@ async function compressForOcr(
       canvas.width = w
       canvas.height = h
       canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
-      console.log(`[OCR] 压缩 ${img.naturalWidth}×${img.naturalHeight} → ${w}×${h} (scale=${scale.toFixed(3)})`)
-      resolve({ compressed: canvas.toDataURL('image/jpeg', 0.85), scale })
+      console.log(`[OCR] 压缩 ${img.naturalWidth}×${img.naturalHeight} → ${w}×${h} (scale=${scale.toFixed(3)}, quality=${quality})`)
+      resolve({ compressed: canvas.toDataURL('image/jpeg', quality), scale })
     }
     img.onerror = reject
     img.src = base64

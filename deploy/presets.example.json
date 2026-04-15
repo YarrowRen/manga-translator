@@ -1,0 +1,42 @@
+{
+  "REDEEM-CODE-1": {
+    "label": "账号A",
+    "llm": {
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-...",
+      "model": "gpt-4o-mini"
+    },
+    "ocr": {
+      "api_token": "your-paddleocr-token",
+      "model": "PP-OCRv5",
+      "compress_enabled": true,
+      "compress_max_side": 2048,
+      "compress_quality": 0.85
+    },
+    "ehentai": {
+      "member_id": "",
+      "pass_hash": "",
+      "igneous": ""
+    }
+  },
+  "REDEEM-CODE-2": {
+    "label": "账号B",
+    "llm": {
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "sk-...",
+      "model": "deepseek-chat"
+    },
+    "ocr": {
+      "api_token": "another-token",
+      "model": "PP-OCRv5",
+      "compress_enabled": true,
+      "compress_max_side": 2048,
+      "compress_quality": 0.85
+    },
+    "ehentai": {
+      "member_id": "123456",
+      "pass_hash": "abcdef...",
+      "igneous": ""
+    }
+  }
+}

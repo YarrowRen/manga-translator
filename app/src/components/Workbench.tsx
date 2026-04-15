@@ -115,6 +115,22 @@ export default function Workbench() {
 
   const { mode: themeMode, setMode: setThemeMode } = useTheme()
 
+  const [isSmall, setIsSmall] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)')
+    setIsSmall(mq.matches)
+    const handler = (e: MediaQueryListEvent) => setIsSmall(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  const themeCycle: ThemeMode[] = ['light', 'dark', 'system']
+  const themeIcon: Record<ThemeMode, string> = { light: '☀', dark: '☾', system: '⊙' }
+  const cycleTheme = () => {
+    const next = themeCycle[(themeCycle.indexOf(themeMode) + 1) % themeCycle.length]
+    setThemeMode(next)
+  }
+
   const currentImage = images[currentIdx]
   const currentId = imageIds[currentIdx] ?? ''
 
@@ -600,7 +616,6 @@ export default function Workbench() {
       }}>
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 15, color: 'var(--text-1)', flexShrink: 0 }}>
-          <span style={{ fontSize: 18 }}>🌸</span>
           <span className="hidden sm:inline">MangaTrans</span>
         </div>
 
@@ -692,19 +707,26 @@ export default function Workbench() {
         <div style={{ flex: 1 }} />
 
         {/* Theme toggle */}
-        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', flexShrink: 0 }}>
-          {(['light', 'dark', 'system'] as ThemeMode[]).map(m => (
-            <button key={m} onClick={() => setThemeMode(m)}
-              title={m === 'light' ? '浅色' : m === 'dark' ? '深色' : '跟随系统'}
-              style={{
-                padding: '5px 9px', fontSize: 13, cursor: 'pointer', border: 'none', fontFamily: 'inherit',
-                background: themeMode === m ? 'var(--accent)' : 'var(--surface)',
-                color: themeMode === m ? '#fff' : 'var(--text-2)',
-              }}>
-              {m === 'light' ? '☀' : m === 'dark' ? '☾' : '⊙'}
-            </button>
-          ))}
-        </div>
+        {isSmall ? (
+          <button onClick={cycleTheme} title={themeMode}
+            style={{ width: 34, height: 34, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, flexShrink: 0 }}>
+            {themeIcon[themeMode]}
+          </button>
+        ) : (
+          <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', flexShrink: 0 }}>
+            {themeCycle.map(m => (
+              <button key={m} onClick={() => setThemeMode(m)}
+                title={m === 'light' ? '浅色' : m === 'dark' ? '深色' : '跟随系统'}
+                style={{
+                  padding: '5px 9px', fontSize: 13, cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+                  background: themeMode === m ? 'var(--accent)' : 'var(--surface)',
+                  color: themeMode === m ? '#fff' : 'var(--text-2)',
+                }}>
+                {themeIcon[m]}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Settings */}
         <button onClick={() => navigate('/settings')}

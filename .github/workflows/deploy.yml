@@ -34,6 +34,9 @@ jobs:
             cp /opt/manga-trans/deploy/nginx.conf /etc/nginx/sites-available/manga-trans
             nginx -t && systemctl reload nginx
 
+            echo "==> write presets"
+            echo '${{ secrets.PRESETS_JSON }}' > /opt/manga-trans/deploy/presets.json
+
             echo "==> restart proxy service"
             systemctl restart manga-trans-proxy
 

@@ -1,15 +1,33 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Save, Wifi, Eye, EyeOff, Check, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Save, Wifi, Eye, EyeOff, Check, AlertCircle, ChevronDown } from 'lucide-react'
 import { loadLLMConfig, saveLLMConfig, type LLMConfig } from '../services/llmConfig'
 import { loadOCRConfig, saveOCRConfig, type OCRConfig } from '../services/ocrConfig'
 import { loadEhentaiConfig, saveEhentaiConfig, type EhentaiConfig } from '../services/ehentaiConfig'
 import { testLLMConnection } from '../services/translationService'
+import { redeemCode } from '../services/redeemService'
 import { useTheme, type ThemeMode } from '../hooks/useTheme'
+
+const THEME_ORDER: ThemeMode[] = ['light', 'dark', 'system']
+const THEME_ICON: Record<ThemeMode, string> = { light: '☀', dark: '☾', system: '⊙' }
+const THEME_LABEL: Record<ThemeMode, string> = { light: '浅色', dark: '深色', system: '跟随系统' }
 
 export default function SettingsPanel() {
   const navigate = useNavigate()
   const { mode: themeMode, setMode: setThemeMode } = useTheme()
+
+  const [isSmall, setIsSmall] = useState(() => window.innerWidth < 640)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)')
+    const handler = (e: MediaQueryListEvent) => setIsSmall(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  const cycleTheme = () => {
+    const next = THEME_ORDER[(THEME_ORDER.indexOf(themeMode) + 1) % THEME_ORDER.length]
+    setThemeMode(next)
+  }
 
   // LLM 配置
   const [config, setConfig] = useState<LLMConfig>(loadLLMConfig)
@@ -24,6 +42,29 @@ export default function SettingsPanel() {
   const [showToken, setShowToken] = useState(false)
   const [ocrSaving, setOcrSaving] = useState(false)
   const [ocrSaveStatus, setOcrSaveStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+  const [ocrAdvanced, setOcrAdvanced] = useState(false)
+
+  // 兑换码
+  const [redeemCodeInput, setRedeemCodeInput] = useState('')
+  const [redeeming, setRedeeming] = useState(false)
+  const [redeemStatus, setRedeemStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
+
+  const handleRedeem = async () => {
+    if (!redeemCodeInput.trim()) return
+    setRedeeming(true); setRedeemStatus(null)
+    try {
+      const result = await redeemCode(redeemCodeInput.trim())
+      if (result.config.llm)      { saveLLMConfig(result.config.llm);      setConfig(result.config.llm) }
+      if (result.config.ocr)      { saveOCRConfig(result.config.ocr);      setOcrConfig(result.config.ocr) }
+      if (result.config.ehentai)  { saveEhentaiConfig(result.config.ehentai); setEhConfig(result.config.ehentai) }
+      setRedeemStatus({ type: 'success', msg: `兑换成功${result.label ? `（${result.label}）` : ''}，配置已自动填入` })
+      setRedeemCodeInput('')
+    } catch (e: any) {
+      setRedeemStatus({ type: 'error', msg: e.message || '兑换失败' })
+    } finally {
+      setRedeeming(false)
+    }
+  }
 
   // ExHentai 配置
   const [ehConfig, setEhConfig] = useState<EhentaiConfig>(loadEhentaiConfig)
@@ -88,7 +129,6 @@ export default function SettingsPanel() {
         </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 15, color: 'var(--text-1)' }}>
-          <span style={{ fontSize: 18 }}>🌸</span>
           MangaTrans
         </div>
         <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
@@ -97,19 +137,25 @@ export default function SettingsPanel() {
         <div style={{ flex: 1 }} />
 
         {/* Theme toggle */}
-        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-          {(['light', 'dark', 'system'] as ThemeMode[]).map(m => (
-            <button key={m} onClick={() => setThemeMode(m)}
-              title={m === 'light' ? '浅色' : m === 'dark' ? '深色' : '跟随系统'}
-              style={{
-                padding: '5px 9px', fontSize: 13, cursor: 'pointer', border: 'none', fontFamily: 'inherit',
-                background: themeMode === m ? 'var(--accent)' : 'var(--surface)',
-                color: themeMode === m ? '#fff' : 'var(--text-2)',
-              }}>
-              {m === 'light' ? '☀' : m === 'dark' ? '☾' : '⊙'}
-            </button>
-          ))}
-        </div>
+        {isSmall ? (
+          <button onClick={cycleTheme} title={THEME_LABEL[themeMode]}
+            style={{ width: 34, height: 34, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, flexShrink: 0 }}>
+            {THEME_ICON[themeMode]}
+          </button>
+        ) : (
+          <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+            {THEME_ORDER.map(m => (
+              <button key={m} onClick={() => setThemeMode(m)} title={THEME_LABEL[m]}
+                style={{
+                  padding: '5px 9px', fontSize: 13, cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+                  background: themeMode === m ? 'var(--accent)' : 'var(--surface)',
+                  color: themeMode === m ? '#fff' : 'var(--text-2)',
+                }}>
+                {THEME_ICON[m]}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
       {/* Content */}
@@ -189,6 +235,52 @@ export default function SettingsPanel() {
               onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
               onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
           </FormField>
+
+          {/* 高级配置折叠区 */}
+          <button onClick={() => setOcrAdvanced(v => !v)}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--text-2)', fontSize: 12, fontWeight: 500, cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-1)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-2)')}>
+            <ChevronDown size={13} style={{ transition: 'transform 0.15s', transform: ocrAdvanced ? 'rotate(180deg)' : 'none' }} />
+            高级配置
+          </button>
+
+          {ocrAdvanced && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 4, paddingLeft: 12, borderLeft: '2px solid var(--border)' }}>
+              <FormField label="上传前压缩">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={ocrConfig.compress_enabled}
+                    onChange={e => setOcrConfig(c => ({ ...c, compress_enabled: e.target.checked }))}
+                    style={{ accentColor: 'var(--accent)', width: 14, height: 14 }} />
+                  <span style={{ fontSize: 13, color: 'var(--text-1)' }}>启用图片压缩</span>
+                </label>
+              </FormField>
+
+              <FormField label={`最长边限制（px）— 当前: ${ocrConfig.compress_max_side === 0 ? '不限' : ocrConfig.compress_max_side}`}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <input type="range" min={512} max={4096} step={256}
+                    value={ocrConfig.compress_max_side === 0 ? 4096 : ocrConfig.compress_max_side}
+                    disabled={!ocrConfig.compress_enabled}
+                    onChange={e => setOcrConfig(c => ({ ...c, compress_max_side: Number(e.target.value) }))}
+                    style={{ flex: 1, accentColor: 'var(--accent)' }} />
+                  <button onClick={() => setOcrConfig(c => ({ ...c, compress_max_side: 0 }))}
+                    disabled={!ocrConfig.compress_enabled}
+                    style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border)', background: ocrConfig.compress_max_side === 0 ? 'var(--accent)' : 'var(--surface)', color: ocrConfig.compress_max_side === 0 ? '#fff' : 'var(--text-2)', cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'inherit' }}>
+                    不限
+                  </button>
+                </div>
+              </FormField>
+
+              <FormField label={`JPEG 质量 — 当前: ${Math.round(ocrConfig.compress_quality * 100)}%`}>
+                <input type="range" min={50} max={100} step={5}
+                  value={Math.round(ocrConfig.compress_quality * 100)}
+                  disabled={!ocrConfig.compress_enabled}
+                  onChange={e => setOcrConfig(c => ({ ...c, compress_quality: Number(e.target.value) / 100 }))}
+                  style={{ width: '100%', accentColor: 'var(--accent)' }} />
+              </FormField>
+            </div>
+          )}
+
           <button onClick={handleOCRSave} disabled={ocrSaving}
             style={{ width: '100%', height: 40, borderRadius: 6, background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontFamily: 'inherit', opacity: ocrSaving ? 0.6 : 1 }}>
             {ocrSaving ? <span className="spinner" /> : <Save size={14} />}
@@ -235,6 +327,27 @@ export default function SettingsPanel() {
             {ehSaving ? '保存中...' : '保存配置'}
           </button>
           {ehSaveStatus && <StatusBadge type={ehSaveStatus.type} msg={ehSaveStatus.msg} onClose={() => setEhSaveStatus(null)} />}
+        </SettingsCard>
+
+        {/* Redeem Card */}
+        <SettingsCard
+          title="兑换码"
+          description="输入兑换码后，填入预设配置信息"
+          style={{ marginTop: 16 }}>
+          <FormField label="兑换码">
+            <input type="text" value={redeemCodeInput}
+              onChange={e => setRedeemCodeInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleRedeem()}
+              placeholder="输入兑换码..." style={{ ...inputStyle, letterSpacing: '0.05em' }}
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')} />
+          </FormField>
+          <button onClick={handleRedeem} disabled={redeeming || !redeemCodeInput.trim()}
+            style={{ width: '100%', height: 40, borderRadius: 6, background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', cursor: redeeming || !redeemCodeInput.trim() ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontFamily: 'inherit', opacity: redeeming || !redeemCodeInput.trim() ? 0.6 : 1 }}>
+            {redeeming ? <span className="spinner" /> : null}
+            {redeeming ? '兑换中...' : '立即兑换'}
+          </button>
+          {redeemStatus && <StatusBadge type={redeemStatus.type} msg={redeemStatus.msg} onClose={() => setRedeemStatus(null)} />}
         </SettingsCard>
 
         <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-3)', marginTop: 24 }}>

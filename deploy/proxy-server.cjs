@@ -12,8 +12,20 @@
 
 const http  = require('node:http')
 const https = require('node:https')
+const fs    = require('node:fs')
+const path  = require('node:path')
 
 const PORT   = parseInt(process.env.PROXY_PORT || '3001', 10)
+
+// 预设配置（兑换码 → 一套配置），不存在时兑换功能禁用
+const PRESETS_FILE = path.join(__dirname, 'presets.json')
+let presets = {}
+try {
+  presets = JSON.parse(fs.readFileSync(PRESETS_FILE, 'utf8'))
+  console.log(`[proxy] Loaded ${Object.keys(presets).length} redeem preset(s)`)
+} catch {
+  console.warn('[proxy] presets.json not found, redeem disabled')
+}
 const EH_UA  = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 
 // 可选：服务器自身出口代理（ExHentai 无法直连时使用）
@@ -95,6 +107,31 @@ const server = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     res.statusCode = 204
     res.end()
+    return
+  }
+
+  // /api/redeem  兑换码校验
+  if (url === '/api/redeem' && req.method === 'POST') {
+    let body = ''
+    req.on('data', chunk => { body += chunk })
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json')
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      try {
+        const { code } = JSON.parse(body)
+        const preset = presets[String(code ?? '').trim().toUpperCase()]
+          ?? presets[String(code ?? '').trim()]
+        if (preset) {
+          res.end(JSON.stringify({ ok: true, label: preset.label ?? '', config: preset }))
+        } else {
+          res.statusCode = 400
+          res.end(JSON.stringify({ ok: false, error: '无效的兑换码' }))
+        }
+      } catch {
+        res.statusCode = 400
+        res.end(JSON.stringify({ ok: false, error: '请求格式错误' }))
+      }
+    })
     return
   }
 
