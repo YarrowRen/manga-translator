@@ -30,6 +30,10 @@ jobs:
             echo "==> deploy dist"
             cp -r dist/. /var/www/manga-trans/dist/
 
+            echo "==> update nginx config"
+            cp /opt/manga-trans/deploy/nginx.conf /etc/nginx/sites-available/manga-trans
+            nginx -t && systemctl reload nginx
+
             echo "==> restart proxy service"
             systemctl restart manga-trans-proxy
 
