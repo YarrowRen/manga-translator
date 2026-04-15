@@ -44,6 +44,8 @@ async function recognizeCloud(
   model: string,
 ): Promise<OcrApiResult[]> {
   const headers = { Authorization: `bearer ${apiToken}` }
+  const t0 = performance.now()
+  const ms = (from: number) => `${(performance.now() - from).toFixed(0)}ms`
 
   // 1. 将 base64 data URL 转为 Blob，用 FormData 提交
   const { blob, ext } = dataUrlToBlob(base64)
@@ -56,21 +58,26 @@ async function recognizeCloud(
   }))
   form.append('file', blob, `image.${ext}`)
 
+  const t1 = performance.now()
   const submitRes = await fetch(CLOUD_JOB_URL, { method: 'POST', headers, body: form })
   if (!submitRes.ok) {
     const text = await submitRes.text()
     throw new Error(`提交 OCR 任务失败 ${submitRes.status}: ${text.slice(0, 200)}`)
   }
   const { data: { jobId } } = await submitRes.json()
+  console.log(`[OCR] ① 上传+提交任务: ${ms(t1)}  jobId=${jobId}`)
 
   // 2. 轮询直到任务完成（最长 2 分钟）
   let jsonlUrl = ''
+  const t2 = performance.now()
   for (let i = 0; i < 60; i++) {
     await sleep(2000)
+    const tPoll = performance.now()
     const pollRes = await fetch(`${CLOUD_JOB_URL}/${jobId}`, { headers })
     if (!pollRes.ok) continue
     const pollData = await pollRes.json()
     const state: string = pollData.data.state
+    console.log(`[OCR] ② 轮询 #${i + 1} (${ms(tPoll)}) state=${state}`)
     if (state === 'done') {
       jsonlUrl = pollData.data.resultUrl.jsonUrl
       break
@@ -79,14 +86,19 @@ async function recognizeCloud(
       throw new Error(`云端 OCR 任务失败: ${pollData.data.errorMsg ?? 'unknown'}`)
     }
   }
+  console.log(`[OCR] ② 等待完成总耗时: ${ms(t2)}`)
 
   if (!jsonlUrl) throw new Error('云端 OCR 超时（>2 分钟）')
 
   // 3. 下载并解析 JSONL 结果（通过 Vite proxy 绕过 bcebos.com CORS）
   const proxiedJsonlUrl = jsonlUrl.replace('https://bj.bcebos.com', '/bcebos-proxy')
+  const t3 = performance.now()
   const resultRes = await fetch(proxiedJsonlUrl)
   if (!resultRes.ok) throw new Error(`结果下载失败: ${resultRes.status}`)
-  return parseCloudJsonl(await resultRes.text())
+  const jsonlText = await resultRes.text()
+  console.log(`[OCR] ③ 下载结果: ${ms(t3)}  size=${jsonlText.length}B`)
+  console.log(`[OCR] 全程总耗时: ${ms(t0)}`)
+  return parseCloudJsonl(jsonlText)
 }
 
 // ── JSONL 解析（兼容 PaddleX / PP-OCRv3 / PP-OCRv5 输出格式）─────────────────
