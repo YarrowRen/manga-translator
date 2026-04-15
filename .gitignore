@@ -27,10 +27,11 @@ inference/
 # ──────────────────────────────────────────
 # Node / Frontend
 # ──────────────────────────────────────────
-frontend/node_modules/
-frontend/dist/
-frontend/dist-ssr/
-frontend/*.local
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
 
 # npm/yarn logs
 npm-debug.log*
