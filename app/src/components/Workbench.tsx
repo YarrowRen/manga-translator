@@ -194,6 +194,13 @@ export default function Workbench() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const toastCounter = useRef(0)
 
+  const fmtErr = (e: any): string => {
+    const msg: string = e?.message ?? String(e)
+    // 去除 HTML 标签，只保留纯文本，截断到 80 字符
+    const plain = msg.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
+    return plain.length > 80 ? plain.slice(0, 80) + '…' : plain
+  }
+
   const showToast = useCallback((msg: string, type: ToastType = 'info', duration = 3000) => {
     const id = ++toastCounter.current
     setToasts(prev => [...prev.slice(-2), { id, msg, type }])
@@ -342,7 +349,7 @@ export default function Workbench() {
       setOcrResults(currentId, results)
       showToast(`识别完成，共 ${results.length} 个文本区域`, 'success')
     } catch (e: any) {
-      showToast('OCR 出错: ' + e.message, 'error')
+      showToast('OCR 出错: ' + fmtErr(e), 'error')
     } finally { setOcrProcessing(false) }
   }
 
@@ -363,7 +370,7 @@ export default function Workbench() {
       )
       showToast('翻译完成', 'success')
     } catch (e: any) {
-      showToast('翻译出错: ' + e.message, 'error')
+      showToast('翻译出错: ' + fmtErr(e), 'error')
     } finally { setTranslating(false) }
   }
 
@@ -387,7 +394,7 @@ export default function Workbench() {
       showToast(`消除完成，耗时 ${((performance.now() - t0) / 1000).toFixed(2)}s`, 'success')
       return true
     } catch (e: any) {
-      showToast('消除失败: ' + e.message, 'error')
+      showToast('消除失败: ' + fmtErr(e), 'error')
       return false
     } finally { setInpainting(false) }
   }
@@ -443,7 +450,7 @@ export default function Workbench() {
       setTextReplaceMode(true)
       showToast('一键翻译完成', 'success')
     } catch (e: any) {
-      showToast('流程出错: ' + e.message, 'error')
+      showToast('流程出错: ' + fmtErr(e), 'error')
       setInpainting(false)
     } finally {
       setPipelineRunning(false)
@@ -1020,11 +1027,11 @@ export default function Workbench() {
       </div>
 
       {/* ── Toast notifications ── */}
-      <div className="fixed bottom-6 left-1/2 z-50 flex flex-col gap-2 pointer-events-none"
-        style={{ transform: 'translateX(-50%)' }}>
+      <div className="fixed top-4 left-1/2 z-50 flex flex-col gap-2 pointer-events-none md:top-auto md:bottom-6"
+        style={{ transform: 'translateX(-50%)', width: 'calc(100vw - 2rem)', maxWidth: 420 }}>
         {toasts.map(toast => (
           <div key={toast.id}
-            className="toast flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm pointer-events-auto whitespace-nowrap"
+            className="toast flex items-start gap-2 px-4 py-2.5 rounded-lg text-sm pointer-events-auto"
             style={{
               background: 'var(--surface)',
               border: `1px solid ${toast.type === 'error' ? 'rgba(207,34,46,0.3)' : toast.type === 'success' ? 'rgba(26,127,55,0.3)' : 'var(--border)'}`,
